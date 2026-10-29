@@ -1,0 +1,12 @@
+numpy
+pandas
+scipy
+scikit-learn
+matplotlib
+seaborn
+pennylane
+umap-learn
+optuna
+openpyxl
+xlrd
+ipykernel
