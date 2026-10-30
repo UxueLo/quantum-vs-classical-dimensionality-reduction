@@ -1,6 +1,8 @@
 # quantum-vs-classical-dimensionality-reduction
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
+[![Status](https://img.shields.io/badge/status-work--in--progress-orange.svg)](#)
 
 ## Overview
 Classical computing hardware and simulation frameworks continue to advance, enabling high-fidelity simulation of quantum circuits. Meanwhile, physical Quantum Processing Units (QPUs) remain constrained by the limitations of the **Noisy Intermediate-Scale Quantum (NISQ)** era, including decoherence, gate infidelity, and limited qubit connectivity.
