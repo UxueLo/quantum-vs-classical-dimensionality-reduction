@@ -10,3 +10,13 @@ Classical computing hardware and simulation frameworks continue to advance, enab
 This research addresses a central question:
 
 > **If classical computers can accurately simulate quantum functionality without NISQ-era hardware limitations, is there any real computational or representation advantage to using quantum dimensionality reduction techniques over state-of-the-art classical algorithms?**
+
+## Deployment
+### Prerequisites
+* Python 3.10 or higher
+* (Recommended) virtual environment manager (`venv` or `conda`)
+### Set Up
+* **Cloning the repository: **
+```bash
+   git clone [https://github.com/your-username/quantum-vs-classical-dimensionality-reduction.git](https://github.com/your-username/quantum-vs-classical-dimensionality-reduction.git)
+   cd quantum-vs-classical-dimensionality-reduction
