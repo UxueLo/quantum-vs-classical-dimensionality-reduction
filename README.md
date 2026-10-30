@@ -20,10 +20,13 @@ This research addresses a central question:
 ```bash
    git clone [https://github.com/your-username/quantum-vs-classical-dimensionality-reduction.git](https://github.com/your-username/quantum-vs-classical-dimensionality-reduction.git)
    cd quantum-vs-classical-dimensionality-reduction
+```
 * Create a virtual environment (venv):
 ```bash
    python -m venv venv
    source venv/bin/activate  # On Windows: venv\Scripts\activate
+```
 * Install dependecies:
 ```bash
    pip install -r requirements.txt
+```
