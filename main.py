@@ -6,7 +6,10 @@ from sklearn.model_selection import train_test_split, cross_val_score, KFold
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.tree import DecisionTreeClassifier
 from sklearn.naive_bayes import GaussianNB
-from sklearn.metrics import accuracy_score
+from sklearn.metrics import (accuracy_score, confusion_matrix, precision_score, recall_score,
+                             f1_score, fbeta_score, matthews_corrcoef, roc_auc_score,
+                             average_precision_score)
+from sklearn.preprocessing import label_binarize
 from qiskit import QuantumCircuit
 from qiskit.circuit import ParameterVector
 from qiskit.circuit.library import ZZFeatureMap
@@ -71,6 +74,52 @@ def reduce_all(X_train, y_train, X_test, y_test):
         "Z_MAP": (X_train_z_map, y_train, X_test_z_map, y_test),
     }
 
+#Function that computes all the evaluation metrics seen in class (03_c_Model_Evaluation)
+def evaluation(y_test, y_pred, y_proba, classes):
+    # Confusion matrix: row i = real class i, column j = predicted class j
+    cm = confusion_matrix(y_test, y_pred, labels=classes)
+
+    # TP, FP, FN and TN of every class (one class against the rest)
+    tp = np.diag(cm)
+    fp = cm.sum(axis=0) - tp
+    fn = cm.sum(axis=1) - tp
+    tn = cm.sum() - (tp + fp + fn)
+
+    # Sensitivity (TP/P) and specificity (TN/N)
+    if len(classes) == 2:
+        # Binary problem: of the positive class (the second label)
+        sensitivity = tp[1] / (tp[1] + fn[1])
+        specificity = tn[1] / (tn[1] + fp[1])
+    else:
+        # Multiclass problem: of each class against the rest, then the macro average
+        sensitivity = np.mean(tp / (tp + fn))
+        specificity = np.mean(tn / (tn + fp))
+
+    # ROC AUC and PR AUC need the probability of each class
+    if len(classes) == 2:
+        roc_auc = roc_auc_score(y_test, y_proba[:, 1])
+        pr_auc = average_precision_score(y_test, y_proba[:, 1], pos_label=classes[1])
+    else:
+        roc_auc = roc_auc_score(y_test, y_proba, multi_class="ovr", average="macro", labels=classes)
+        y_bin = label_binarize(y_test, classes=classes)
+        pr_auc = average_precision_score(y_bin, y_proba, average="macro")
+
+    # Macro average: every class has the same weight (recommended in class when no class is more important)
+    return {
+        "accuracy": accuracy_score(y_test, y_pred),
+        "error_rate": 1 - accuracy_score(y_test, y_pred),
+        "sensitivity": sensitivity,
+        "specificity": specificity,
+        "g_mean": np.sqrt(sensitivity * specificity),
+        "precision": precision_score(y_test, y_pred, average="macro", zero_division=0),
+        "recall": recall_score(y_test, y_pred, average="macro", zero_division=0),
+        "f1": f1_score(y_test, y_pred, average="macro", zero_division=0),
+        "f2": fbeta_score(y_test, y_pred, beta=2, average="macro", zero_division=0),
+        "mcc": matthews_corrcoef(y_test, y_pred),
+        "roc_auc": roc_auc,
+        "pr_auc": pr_auc,
+        "confusion_matrix": cm.tolist(),
+    }
 #Functions that receive a dataset and prepare the sets for training and testing before applying a traditional ML technique
 #Fucntion that applies classification
 def classification(X_train, y_train, X_test, y_test):
@@ -112,11 +161,13 @@ def classification(X_train, y_train, X_test, y_test):
         # Train with the whole train set and evaluate on test
         clf = clf.fit(X_train, y_train)
         y_pred = clf.predict(X_test)
-        test_acc = accuracy_score(y_test, y_pred)
+        y_proba = clf.predict_proba(X_test)
+        metrics = evaluation(y_test, y_pred, y_proba, clf.classes_)
 
         results.append({"model": name, "hyperparameters": hyperparameters,
                         "cv_accuracy": round(float(cv_acc), 3),
-                        "test_accuracy": round(float(test_acc), 3)})
+                        "test_metrics": {k: (round(float(v), 3) if k != "confusion_matrix" else v)
+                                         for k, v in metrics.items()}})
 
     # Best hyperparameter configuration of each model according to the cross validation
     best = {}
