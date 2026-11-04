@@ -2,7 +2,7 @@ import numpy as np
 import umap
 from sklearn.datasets import load_iris
 from sklearn.decomposition import KernelPCA
-from sklearn.model_selection import train_test_split, cross_val_score, KFold
+from sklearn.model_selection import train_test_split, cross_val_score, StratifiedKFold
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.tree import DecisionTreeClassifier
 from sklearn.naive_bayes import GaussianNB
@@ -14,6 +14,13 @@ from qiskit import QuantumCircuit
 from qiskit.circuit import ParameterVector
 from qiskit.circuit.library import ZZFeatureMap
 from qiskit.quantum_info import Statevector, SparsePauliOp
+from sklearn.svm import SVC
+from sklearn.ensemble import RandomForestClassifier
+from scipy.stats import f_oneway, tukey_hsd
+
+import warnings
+warnings.filterwarnings("ignore")
+
 #Functions that apply classic ML methods
 
 #def classification(X_train, y_train, X_test, y_test):
@@ -124,7 +131,8 @@ def evaluation(y_test, y_pred, y_proba, classes):
 #Fucntion that applies classification
 def classification(X_train, y_train, X_test, y_test):
     # Same cross validation as in the Naive Bayes notebook
-    kf = KFold(n_splits=5, shuffle=True, random_state=0)
+    # Stratified cross-validation (recommended 10-fold)
+    kf = StratifiedKFold(n_splits=10, shuffle=True, random_state=0)
 
     # Hyperparameter configurations we want to try for each model
     configs = []
@@ -151,6 +159,23 @@ def classification(X_train, y_train, X_test, y_test):
         clf = GaussianNB(var_smoothing=var_smoothing)
         hyperparameters = {"variance_floor (var_smoothing)": var_smoothing}
         configs.append(("Gaussian Naive Bayes", clf, hyperparameters))
+    
+    # Support Vector Machines (SVM)
+    # We evaluate the admissible kernels seen in theory: linear, rbf, poly, sigmoid
+    for kernel in ["linear", "rbf", "poly", "sigmoid"]:
+        for C_val in [0.1, 1.0, 10.0]:
+            # The probability=True parameter is mandatory to compute roc_auc and pr_auc in evaluation()
+            clf = SVC(kernel=kernel, C=C_val, probability=True, random_state=42)
+            hyperparameters = {"kernel": kernel, "C": C_val}
+            configs.append(("SVM", clf, hyperparameters))
+    
+    # Random Forest
+    # Ensemble method that creates multiple decision trees to reduce variance and overfitting
+    for n_estimators in [50, 100, 200]: # Number of trees in the forest
+        for max_depth in [None, 3, 5, 10]:
+            clf = RandomForestClassifier(n_estimators=n_estimators, max_depth=max_depth, random_state=42)
+            hyperparameters = {"n_estimators": n_estimators, "max_depth": max_depth}
+            configs.append(("Random Forest", clf, hyperparameters))
 
     results = []
     for name, clf, hyperparameters in configs:
@@ -166,6 +191,7 @@ def classification(X_train, y_train, X_test, y_test):
 
         results.append({"model": name, "hyperparameters": hyperparameters,
                         "cv_accuracy": round(float(cv_acc), 3),
+                        "cv_scores": accs,
                         "test_metrics": {k: (round(float(v), 3) if k != "confusion_matrix" else v)
                                          for k, v in metrics.items()}})
 
@@ -174,6 +200,26 @@ def classification(X_train, y_train, X_test, y_test):
     for r in results:
         if r["model"] not in best or r["cv_accuracy"] > best[r["model"]]["cv_accuracy"]:
             best[r["model"]] = r
+    
+    # --- Statistical Tests: ANOVA and Tukey's HSD ---
+    # We extract the cross-validation scores of the best configuration for each model
+    best_model_names = list(best.keys())
+    best_model_scores = [best[model]["cv_scores"] for model in best_model_names]
+
+    print("\n--- Statistical Tests ---")
+    # Perform one-way ANOVA to check if at least one model is significantly different
+    stat, p_value = f_oneway(*best_model_scores)
+    print(f"ANOVA p-value: {p_value:.4f}")
+
+    if p_value < 0.05:
+        print("Significant differences found among models (p < 0.05). Running Tukey's HSD...")
+        # Perform Tukey's HSD post-hoc test to see which specific pairs differ
+        res = tukey_hsd(*best_model_scores)
+        print(res)
+    else:
+        print("No significant differences found among the models (p >= 0.05).")
+    print("-------------------------")
+
     return list(best.values())
 def data_class(df):
     # For every dataset the classification target feature will be index = 0
