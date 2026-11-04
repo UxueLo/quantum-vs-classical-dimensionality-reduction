@@ -1,17 +1,140 @@
 import os
 import sys
 from pathlib import Path
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from dotenv import load_dotenv
 from google import genai
 from google.genai import types
 from pydantic import BaseModel, Field
 import numpy as np
+import pandas as pd
 import scipy.linalg as la
 from sklearn.decomposition import PCA
 from sklearn.linear_model import LinearRegression, LogisticRegression
 from sklearn.ensemble import RandomForestRegressor, RandomForestClassifier
 from sklearn.metrics.pairwise import rbf_kernel, polynomial_kernel, linear_kernel
+
+# ==============================================================================
+# INSERT COLUMNS INTO CSV
+# ==============================================================================
+
+def guardar_filas_en_csv(filas: List[Dict[str, Any]], output_csv_path: str):
+    """Guarda o anexa de forma segura una lista de diccionarios en un CSV."""
+    if not filas:
+        print("⚠️ No hay filas que guardar.")
+        return
+
+    df_nuevas = pd.DataFrame(filas)
+    csv_file = Path(output_csv_path)
+    existe_archivo = csv_file.exists()
+
+    df_nuevas.to_csv(
+        output_csv_path,
+        mode="a" if existe_archivo else "w",
+        header=not existe_archivo,
+        index=False,
+        encoding="utf-8"
+    )
+
+    print(f"✅ Guardadas {len(filas)} filas exitosamente en '{output_csv_path}'.")
+
+
+def registrar_paper_pdf_en_csv(pdf_path: str, output_csv_path: str, client_api: Optional[genai.Client] = None):
+    """
+    MODO 1: Procesa un paper PDF con Gemini, extrae TODOS sus experimentos 
+    y los guarda como múltiples filas en el CSV.
+    """
+    experimentos = extraer_todos_los_experimentos_de_pdf(pdf_path, client_api=client_api)
+    if experimentos:
+        guardar_filas_en_csv(experimentos, output_csv_path)
+
+
+def registrar_experimento_local_en_csv(
+    output_csv_path: str,
+    X_train: np.ndarray,
+    y_train: np.ndarray,
+    K_Q: np.ndarray,
+    k_latente: int = 2,
+    metadatos_experimento: Optional[Dict[str, Any]] = None
+):
+    """
+    MODO 2: Calcula las métricas algebraicas de un dataset local en Python (X, y, K_Q)
+    y las anexa al CSV.
+    """
+    print("📐 Calculando métricas algebraicas locales en Python...")
+    fila: Dict[str, Any] = {}
+
+    if metadatos_experimento:
+        fila.update(metadatos_experimento)
+
+    # Calcular métricas teóricas espectrales
+    metricas_locales = calcular_metricas_matematicas(
+        X_train=X_train,
+        y_train=y_train,
+        K_Q=K_Q,
+        k_latente=k_latente
+    )
+    
+    metricas_locales["n_samples"] = len(y_train)
+    metricas_locales["n_features_original"] = X_train.shape[1]
+    fila.update(metricas_locales)
+
+    if "archivo_origen" not in fila:
+        fila["archivo_origen"] = "experimento_local"
+
+    guardar_filas_en_csv([fila], output_csv_path)
+
+
+# ==============================================================================
+# EJEMPLO DE EJECUCIÓN (MAIN)
+# ==============================================================================
+if __name__ == "__main__":
+    CSV_META_DATASET = "meta_dataset_ventaja_cuantica.csv"
+
+    # --------------------------------------------------------------------------
+    # CASO A: Extraer automáticamente varios experimentos desde un PDF
+    # --------------------------------------------------------------------------
+    pdf_ejemplo = "papers/huang_2021_power_of_data.pdf"
+    if Path(pdf_ejemplo).exists():
+        print("\n--- PROCESANDO PAPER DE LA LITERATURA ---")
+        registrar_paper_pdf_en_csv(
+            pdf_path=pdf_ejemplo,
+            output_csv_path=CSV_META_DATASET
+        )
+
+    # --------------------------------------------------------------------------
+    # CASO B: Calcular y registrar un experimento local sobre datos propios
+    # --------------------------------------------------------------------------
+    print("\n--- PROCESANDO EXPERIMENTO LOCAL DE PYTHON ---")
+    np.random.seed(42)
+    N = 50
+    X_dummy = np.random.randn(N, 6)
+    y_dummy = np.random.choice([0, 1], size=N)
+
+    # Simular Kernel Cuántico normalizado (Tr(K) = N)
+    distancias = np.linalg.norm(X_dummy[:, None] - X_dummy[None, :], axis=-1)**2
+    K_Q_dummy = np.exp(-0.15 * distancias)
+    K_Q_dummy = K_Q_dummy * (N / np.trace(K_Q_dummy))
+
+    registrar_experimento_local_en_csv(
+        output_csv_path=CSV_META_DATASET,
+        X_train=X_dummy,
+        y_train=y_dummy,
+        K_Q=K_Q_dummy,
+        k_latente=3,
+        metadatos_experimento={
+            "dataset_name": "Synthetic_Bloch_Data",
+            "domain_type": "synthetic",
+            "task_type": "classification",
+            "encoding_type": "ZZFeatureMap",
+            "n_qubits": 6,
+            "circuit_depth": 2,
+            "score_classical": 0.74,
+            "score_quantum": 0.91,
+            "quantum_advantage_reported": True
+        }
+    )
+
 
 
 # ==============================================================================
@@ -20,7 +143,7 @@ from sklearn.metrics.pairwise import rbf_kernel, polynomial_kernel, linear_kerne
 from pydantic import BaseModel, Field
 from typing import Optional
 
-class MetadatosPaper(BaseModel):
+class ExperimentoUnico(BaseModel):
     # Identificadores (Gemini los inferirá del contexto del paper)
     dataset_name: str = Field(description="Nombre del dataset (ej: Breast Cancer, MedMNIST, German Credit)")
     domain_type: str = Field(description="Dominio del dataset (ej: medical_image, tabular_health, physics, credit)")
@@ -43,72 +166,54 @@ class MetadatosPaper(BaseModel):
     psi_huang: Optional[float] = Field(default=None, description="Cota de ventaja Psi si el paper la menciona")
     kernel_concentration_observed: Optional[bool] = Field(default=None, description="¿Mencionan problemas de concentración del kernel/barren plateaus?")
 
+class ReportePaper(BaseModel):
+    paper_title: Optional[str] = Field(default=None, description="Título del artículo de investigación")
+    experimentos: List[ExperimentoUnico] = Field(description="Lista de todos los experimentos y benchmarks reportados en el paper")
 
-def extraer_metadatos_de_pdf(pdf_path: str, client_api: Optional[genai.Client] = None) -> Dict[str, Any]:
-    """
-    Lee un archivo PDF de investigación y extrae sus metadatos estructurados mediante Gemini API.
-    
-    :param pdf_path: Ruta al archivo PDF del paper.
-    :param client_api: Instancia opcional del cliente genai. Si es None, se crea una automáticamente.
-    :return: Diccionario con las columnas de metadatos extraídas.
-    """
+def extraer_todos_los_experimentos_de_pdf(pdf_path: str, client_api: Optional[genai.Client] = None) -> List[Dict[str, Any]]:
     path = Path(pdf_path)
     
-    # Verificación de existencia del archivo
-    if not path.is_file():
-        raise FileNotFoundError(f"❌ El archivo no existe en la ruta especificada: {pdf_path}")
-    
-    if path.suffix.lower() != ".pdf":
-        raise ValueError(f"❌ El archivo proporcionado debe ser un PDF. Recibido: {path.suffix}")
-
-    # Inicialización del cliente si no se proporciona uno
     if client_api is None:
         load_dotenv()
-        api_key = os.getenv("GEMINI_API_KEY")
-        if not api_key:
-            raise ValueError("❌ No se encontró la variable GEMINI_API_KEY en el entorno o archivo .env")
-        client_api = genai.Client(api_key=api_key)
+        client_api = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
-    print(f"📄 Procesando paper: {path.name}...")
-
-    # Lectura del archivo en binario
     with open(path, "rb") as f:
         pdf_bytes = f.read()
 
     prompt = """
-    Analiza rigurosamente este artículo de investigación cuántica.
-    Extrae la información sobre el conjunto de datos y el experimento cuántico realizado.
-    Rellena los campos del esquema JSON proporcionado.
-    Si algún dato numérico o métrica no figura de forma explícita en el documento, asigna el valor null.
+    Analiza este artículo de investigación y extrae TODAS las pruebas, benchmarks y experimentos 
+    cuánticos reportados. Si los autores probaron varios datasets o varios mapas de características (encodings),
+    crea un registro independiente en la lista 'experimentos' para cada uno de ellos.
     """
 
-    try:
-        response = client_api.models.generate_content(
-            model='gemini-2.5-flash',
-            contents=[
-                types.Part.from_bytes(data=pdf_bytes, mime_type='application/pdf'),
-                prompt
-            ],
-            config=types.GenerateContentConfig(
-                response_mime_type="application/json",
-                response_schema=MetadatosPaper,
-                temperature=0.1
-            ),
-        )
-        
-        # Asegurarnos de que response.text contenga un string válido
-        if not response.text:
-            raise ValueError(f"La API de Gemini no devolvió texto en la respuesta para {path.name}.")
+    response = client_api.models.generate_content(
+        model='gemini-2.5-flash',
+        contents=[
+            types.Part.from_bytes(data=pdf_bytes, mime_type='application/pdf'),
+            prompt
+        ],
+        config=types.GenerateContentConfig(
+            response_mime_type="application/json",
+            response_schema=ReportePaper,
+            temperature=0.1
+        ),
+    )
 
-        # Validación con Pydantic y conversión a diccionario
-        metadatos = MetadatosPaper.model_validate_json(response.text).model_dump()
-        metadatos["archivo_origen"] = path.name
-        return metadatos
+    if not response.text:
+        return []
 
-    except Exception as e:
-        print(f"❌ Error al procesar {path.name} con la API de Gemini: {str(e)}")
-        return {}
+    # Validar el reporte completo
+    reporte = ReportePaper.model_validate_json(response.text)
+    
+    # Convertir a lista de diccionarios y añadir el nombre del archivo a cada fila
+    lista_filas = []
+    for exp in reporte.experimentos:
+        dict_exp = exp.model_dump()
+        dict_exp["archivo_origen"] = path.name
+        dict_exp["paper_title"] = reporte.paper_title
+        lista_filas.append(dict_exp)
 
+    return lista_filas
 
 
 
@@ -285,7 +390,7 @@ def calcular_metricas_matematicas(
     y_train: np.ndarray, 
     K_Q: np.ndarray, 
     k_latente: int,
-    K_C_list: list[np.ndarray] = None
+    K_C_list: list[np.ndarray] | None = None
 ) -> dict:
     """
     Calcula de forma unificada todas las metacaracterísticas matemáticas y espectrales.
