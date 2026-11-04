@@ -7,21 +7,41 @@ from google import genai
 from google.genai import types
 from pydantic import BaseModel, Field
 import numpy as np
-import pandas as pd
+import scipy.linalg as la
+from sklearn.decomposition import PCA
+from sklearn.linear_model import LinearRegression, LogisticRegression
+from sklearn.ensemble import RandomForestRegressor, RandomForestClassifier
+from sklearn.metrics.pairwise import rbf_kernel, polynomial_kernel, linear_kernel
 
+
+# ==============================================================================
+# API COLUMN EXTRACTION
+# ==============================================================================
+from pydantic import BaseModel, Field
+from typing import Optional
 
 class MetadatosPaper(BaseModel):
-    dataset_name: str = Field(description="Name of the dataset used in the experiment")
-    domain_type: str = Field(description="Dataset domain: 'tabular', 'astrophysics', 'medical', 'chemical', 'image', etc.")
-    task_type: str = Field(description="task type: 'classification', 'regression', o 'clustering'")
-    encoding_type: str = Field(description="Feature map encoding type: 'AngleEncoding', 'ZZFeatureMap', 'IQP', etc.")
-    n_qubits: Optional[int] = Field(default=None, description="nr. qubits used on the circuit")
-    circuit_depth: Optional[int] = Field(default=None, description="quantum circuit depth")
-    is_real_hardware: bool = Field(default=False, description="True if it was deployed in a real quantum computer, False if it was in a simulator")
-    n_shots: Optional[int] = Field(default=None, description="nr. of measures/shots")
-    method_used: str = Field(description="reduction/kernel main method: 'QKPCA', 'QAE', 'KPCA', 'PCA', etc.")
-    score_classical: Optional[float] = Field(default=None, description="performance of the best classical model(F1, Accuracy, R2)")
-    score_quantum: Optional[float] = Field(default=None, description="performance of the best quantum model")
+    # Identificadores (Gemini los inferirá del contexto del paper)
+    dataset_name: str = Field(description="Nombre del dataset (ej: Breast Cancer, MedMNIST, German Credit)")
+    domain_type: str = Field(description="Dominio del dataset (ej: medical_image, tabular_health, physics, credit)")
+    task_type: str = Field(description="Tipo de tarea inferida: 'classification', 'regression' o 'clustering'")
+    
+    # Configuración del Experimento (Suelen estar en todos los papers)
+    encoding_type: Optional[str] = Field(default=None, description="Mapa de características (ej: ZZFeatureMap, Angle, Covariant, PQK)")
+    n_qubits: Optional[int] = Field(default=None, description="Número de qubits utilizados")
+    circuit_depth: Optional[int] = Field(default=None, description="Profundidad del circuito")
+    is_real_hardware: Optional[bool] = Field(default=None, description="True si usaron QPU real, False si usaron simulador")
+    
+    # Resultados Empíricos (NÚCLEO de los papers de Benchmarking 2023-2026)
+    score_classical: Optional[float] = Field(default=None, description="Rendimiento del mejor modelo clásico reportado (Accuracy/F1/AUC)")
+    score_quantum: Optional[float] = Field(default=None, description="Rendimiento del modelo cuántico reportado")
+    quantum_advantage_reported: Optional[bool] = Field(default=None, description="¿Los autores concluyen que hubo ventaja cuántica significativa?")
+    
+    # Diagnósticos Teóricos Avanzados (Solo estarán en papers de teoría como Huang 2021)
+    g_CQ_star: Optional[float] = Field(default=None, description="Diferencia geométrica g_CQ si el paper la calcula")
+    s_Q: Optional[float] = Field(default=None, description="Complejidad cuántica s_Q si el paper la calcula")
+    psi_huang: Optional[float] = Field(default=None, description="Cota de ventaja Psi si el paper la menciona")
+    kernel_concentration_observed: Optional[bool] = Field(default=None, description="¿Mencionan problemas de concentración del kernel/barren plateaus?")
 
 
 def extraer_metadatos_de_pdf(pdf_path: str, client_api: Optional[genai.Client] = None) -> Dict[str, Any]:
@@ -76,6 +96,10 @@ def extraer_metadatos_de_pdf(pdf_path: str, client_api: Optional[genai.Client] =
             ),
         )
         
+        # Asegurarnos de que response.text contenga un string válido
+        if not response.text:
+            raise ValueError(f"La API de Gemini no devolvió texto en la respuesta para {path.name}.")
+
         # Validación con Pydantic y conversión a diccionario
         metadatos = MetadatosPaper.model_validate_json(response.text).model_dump()
         metadatos["archivo_origen"] = path.name
@@ -88,26 +112,211 @@ def extraer_metadatos_de_pdf(pdf_path: str, client_api: Optional[genai.Client] =
 
 
 
-def calcular_metricas_matematicas(X_train, y_train, K_Q, K_C_list, k_latente):
-    N = len(y_train)
+# ==============================================================================
+# COLUMN CALCULATIONS
+# ==============================================================================
+import numpy as np
+import scipy.linalg as la
+from sklearn.decomposition import PCA
+from sklearn.linear_model import LinearRegression, LogisticRegression
+from sklearn.ensemble import RandomForestRegressor, RandomForestClassifier
+from sklearn.metrics.pairwise import rbf_kernel, polynomial_kernel, linear_kernel
+
+
+# ==============================================================================
+# 1. NORMALIZACIÓN DE MATRICES DE GRAM
+# ==============================================================================
+
+def normalizar_matriz_gram(K: np.ndarray) -> np.ndarray:
+    """
+    Normaliza una matriz de Gram K (N x N) para garantizar que Tr(K) = N.
+    Condición imprescindible para comparar kernels a la misma escala.
+    """
+    N = K.shape[0]
+    traza = np.trace(K)
+    if traza <= 0:
+        raise ValueError("La traza de la matriz de Gram debe ser estrictamente positiva.")
+    return K * (N / traza)
+
+
+# ==============================================================================
+# 2. LINEALIDAD Y VARIANZA EXPLICADA CLÁSICA
+# ==============================================================================
+
+def calcular_delta_linealidad(X: np.ndarray, y: np.ndarray, task_type: str = "auto") -> float:
+    """
+    Calcula el factor de no linealidad delta_lin = 1 - (Score_Lineal / Score_RandomForest).
+    """
+    if task_type == "auto":
+        is_classification = len(np.unique(y)) <= 10 and not np.issubdtype(y.dtype, np.floating)
+    else:
+        is_classification = (task_type == "classification")
+
+    if is_classification:
+        model_lin = LogisticRegression(max_iter=1000).fit(X, y)
+        model_rf = RandomForestClassifier(n_estimators=100, random_state=42).fit(X, y)
+    else:
+        model_lin = LinearRegression().fit(X, y)
+        model_rf = RandomForestRegressor(n_estimators=100, random_state=42).fit(X, y)
+
+    score_lin = max(0.0, float(model_lin.score(X, y)))
+    score_rf = max(1e-5, float(model_rf.score(X, y)))
+
+    delta_lin = 1.0 - (score_lin / score_rf)
+    return float(np.clip(delta_lin, 0.0, 1.0))
+
+
+def calcular_varianza_pca(X: np.ndarray, k_latente: int) -> float:
+    """
+    Calcula la varianza explicada acumulada por PCA clásico en k componentes.
+    """
+    n_components = min(k_latente, X.shape[1], X.shape[0])
+    pca = PCA(n_components=n_components).fit(X)
+    return float(np.sum(pca.explained_variance_ratio_))
+
+
+# ==============================================================================
+# 3. ALINEACIÓN KERNEL-TARGET CENTRADA (A_c)
+# ==============================================================================
+
+def compute_kernel_target_alignment(K: np.ndarray, y: np.ndarray) -> float:
+    """
+    Calcula la alineación centrada entre la matriz de Gram K y la matriz del 
+    producto externo de etiquetas (y * y^T). Retorna un valor en [-1, 1].
+    """
+    N = len(y)
+    K_norm = normalizar_matriz_gram(K)
     
-    # Linealidad clásica
+    # Matriz de centrado H = I - (1/N) * 11^T
+    H = np.eye(N) - np.ones((N, N)) / N
+    K_c = H @ K_norm @ H
+    
+    # Matriz de etiquetas centrada Y_c = H @ (y y^T) @ H
+    y_vec = y.reshape(-1, 1).astype(float)
+    Y = y_vec @ y_vec.T
+    Y_c = H @ Y @ H
+    
+    # Producto interno de Frobenius / producto de normas de Frobenius
+    num = np.sum(K_c * Y_c)
+    den = np.linalg.norm(K_c, 'fro') * np.linalg.norm(Y_c, 'fro')
+    
+    if den <= 1e-10:
+        return 0.0
+    return float(np.clip(num / den, -1.0, 1.0))
+
+
+# ==============================================================================
+# 4. GEOMETRÍA Y COMPLEJIDAD CUÁNTICA VS CLÁSICA
+# ==============================================================================
+
+def compute_regularized_gCQ(K_Q: np.ndarray, K_C_list: list[np.ndarray], lambda_reg: float = 1e-3) -> float:
+    """
+    Calcula la diferencia geométrica regularizada mínima g_CQ* frente a una familia de kernels clásicos.
+    """
+    N = K_Q.shape[0]
+    K_Q_norm = normalizar_matriz_gram(K_Q)
+
+    # Raíz cuadrada de K_Q mediante descomposición espectral
+    eigvals_Q, eigvecs_Q = np.linalg.eigh(K_Q_norm)
+    eigvals_Q = np.maximum(eigvals_Q, 0.0)
+    sqrt_KQ = eigvecs_Q @ np.diag(np.sqrt(eigvals_Q)) @ eigvecs_Q.T
+
+    g_values = []
+    I_N = np.eye(N)
+
+    for K_C in K_C_list:
+        K_C_norm = normalizar_matriz_gram(K_C)
+        KC_reg_inv = np.linalg.inv(K_C_norm + lambda_reg * I_N)
+        M = sqrt_KQ @ KC_reg_inv @ sqrt_KQ
+        
+        max_eigval = float(np.max(np.linalg.eigvalsh(M)))
+        g_val = np.sqrt(max(0.0, max_eigval))
+        g_values.append(g_val)
+
+    return float(np.min(g_values))
+
+
+def compute_quantum_complexity(K: np.ndarray, y: np.ndarray, lambda_reg: float = 1e-3) -> float:
+    """
+    Calcula la complejidad de aprendizaje de un modelo de kernel s = y^T * (K + lambda * I)^-1 * y.
+    """
+    N = len(y)
+    K_norm = normalizar_matriz_gram(K)
+    y_vec = y.astype(float)
+    
+    solucion = np.linalg.solve(K_norm + lambda_reg * np.eye(N), y_vec)
+    s_val = float(y_vec.T @ solucion)
+    return max(0.0, s_val)
+
+
+def compute_min_classical_complexity(K_C_list: list[np.ndarray], y: np.ndarray, lambda_reg: float = 1e-3) -> float:
+    """
+    Calcula la menor complejidad alcanzable por la familia de kernels clásicos (s_C_min).
+    """
+    s_C_values = [compute_quantum_complexity(K_C, y, lambda_reg=lambda_reg) for K_C in K_C_list]
+    return float(np.min(s_C_values))
+
+
+# ==============================================================================
+# 5. BASELINES CLÁSICOS
+# ==============================================================================
+
+def construir_familia_kernels_clasicos(X: np.ndarray) -> list[np.ndarray]:
+    """
+    Construye la familia K_C_list (Lineal, Polinómico d=2,3 y RBF gammas=[0.01, 0.1, 1.0, 10.0]).
+    """
+    K_C_list = [linear_kernel(X)]
+    
+    for degree in [2, 3]:
+        K_C_list.append(polynomial_kernel(X, degree=degree))
+        
+    for gamma in [0.01, 0.1, 1.0, 10.0]:
+        K_C_list.append(rbf_kernel(X, gamma=gamma))
+        
+    return [normalizar_matriz_gram(K_C) for K_C in K_C_list]
+
+
+# ==============================================================================
+# 6. FUNCIÓN INTEGRADORA DEFINITIVA
+# ==============================================================================
+
+def calcular_metricas_matematicas(
+    X_train: np.ndarray, 
+    y_train: np.ndarray, 
+    K_Q: np.ndarray, 
+    k_latente: int,
+    K_C_list: list[np.ndarray] = None
+) -> dict:
+    """
+    Calcula de forma unificada todas las metacaracterísticas matemáticas y espectrales.
+    """
+    N = len(y_train)
+
+    # Si no se proporciona K_C_list, se genera automáticamente a partir de X_train
+    if K_C_list is None:
+        K_C_list = construir_familia_kernels_clasicos(X_train)
+
+    # 1. Métricas de Estructura Clásica
     delta_lin = calcular_delta_linealidad(X_train, y_train)
     eta_pca = calcular_varianza_pca(X_train, k_latente)
-    
-    # Geometría y Complejidad
+
+    # 2. Diferencia Geométrica y Complejidades
     g_CQ_star = compute_regularized_gCQ(K_Q, K_C_list, lambda_reg=1e-3)
     s_Q = compute_quantum_complexity(K_Q, y_train, lambda_reg=1e-3)
     s_C_min = compute_min_classical_complexity(K_C_list, y_train, lambda_reg=1e-3)
-    
-    # Cota teórica de Huang
+
+    # 3. Cota Teórica de Ventaja de Huang (Psi)
     psi_huang = g_CQ_star * np.sqrt(s_Q / N)
-    
-    # Diagnóstico espectral
-    eigenvals = np.linalg.eigvalsh(K_Q)
+
+    # 4. Alineación Kernel-Target Centrada (A_c_Q)
+    A_c_Q = compute_kernel_target_alignment(K_Q, y_train)
+
+    # 5. Dimensión Efectiva Espectral (d_eff_Q)
+    K_Q_norm = normalizar_matriz_gram(K_Q)
+    eigenvals = np.linalg.eigvalsh(K_Q_norm)
     eigenvals = eigenvals[eigenvals > 1e-10]
-    d_eff_Q = (np.sum(eigenvals)**2) / np.sum(eigenvals**2)
-    
+    d_eff_Q = float((np.sum(eigenvals)**2) / np.sum(eigenvals**2))
+
     return {
         "delta_linearity": delta_lin,
         "eta_pca_k": eta_pca,
@@ -115,6 +324,6 @@ def calcular_metricas_matematicas(X_train, y_train, K_Q, K_C_list, k_latente):
         "s_Q": s_Q,
         "s_C_min": s_C_min,
         "psi_huang": psi_huang,
+        "A_c_Q": A_c_Q,
         "d_eff_Q": d_eff_Q
     }
-
