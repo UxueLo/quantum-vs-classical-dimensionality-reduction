@@ -23,7 +23,7 @@ This research addresses a central question:
 ```
 2. Create a virtual environment (venv):
 ```bash
-   python -m venv venv
+   py -m venv venv
    source venv/bin/activate  # On Windows: venv\Scripts\activate
 ```
 3. Install dependecies:
