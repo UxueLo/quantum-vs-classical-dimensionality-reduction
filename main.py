@@ -36,6 +36,7 @@ from sklearn.datasets import load_diabetes
 warnings.filterwarnings("ignore")
 
 import os
+import csv
 import time
 import matplotlib
 matplotlib.use("Agg")   # save the figures as files without opening windows
@@ -218,6 +219,15 @@ def plot_best_tree(title, clf, folder="results"):
     plt.close(fig)
 
 
+#Function that saves a list of results as a CSV file (one row per configuration), in the "results" folder
+def save_csv(rows, columns, filename, folder="results"):
+    os.makedirs(folder, exist_ok=True)
+    with open(os.path.join(folder, filename), "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=columns, extrasaction="ignore")
+        writer.writeheader()
+        writer.writerows(rows)
+
+
 #Function that applies classification
 def classification(X_train, y_train, X_test, y_test, title="dataset"):
     # Stratified cross-validation (recommended 10-fold). If a class has less than 10 examples,
@@ -305,6 +315,15 @@ def classification(X_train, y_train, X_test, y_test, title="dataset"):
                         "test_metrics": {k: (round(float(v), 3) if k != "confusion_matrix" else v)
                                          for k, v in metrics.items()},
                         "clf": clf, "y_proba": y_proba, "classes": clf.classes_})
+
+    # Table with every configuration tried, saved as a CSV in the "results" folder
+    save_csv([{"model": r["model"], "hyperparameters": r["hyperparameters"], "cv_accuracy": r["cv_accuracy"],
+               "cv_accuracy_std": r["cv_accuracy_std"], "train_time_s": r["train_time_s"], **r["test_metrics"]}
+              for r in results],
+             ["model", "hyperparameters", "cv_accuracy", "cv_accuracy_std", "train_time_s", "accuracy",
+              "error_rate", "sensitivity", "specificity", "g_mean", "precision", "recall", "f1", "f1_micro",
+              "f1_weighted", "f0.5", "f2", "mcc", "roc_auc", "pr_auc"],
+             f"classification_all_configs_{title}.csv")
 
     # Best hyperparameter configuration of each model according to the cross validation
     best = {}
@@ -462,7 +481,7 @@ def statistical_tests(groups, alpha=0.05):
 
 
 #Function that applies regression
-def regression(X_train, y_train, X_test, y_test):
+def regression(X_train, y_train, X_test, y_test, title="dataset"):
     y_train = np.asarray(y_train, dtype=float)
     y_test = np.asarray(y_test, dtype=float)
 
@@ -598,6 +617,13 @@ def regression(X_train, y_train, X_test, y_test):
                         "cv_scores": rmses,
                         "test_metrics": {k: round(float(v), 3) for k, v in metrics.items()}})
 
+    # Table with every configuration tried (04_g notebook), saved as a CSV in the "results" folder
+    save_csv([{"model": r["model"], "hyperparameters": r["hyperparameters"], "cv_rmse": r["cv_rmse"],
+               "cv_rmse_std": r["cv_rmse_std"], **r["test_metrics"]} for r in results],
+             ["model", "hyperparameters", "cv_rmse", "cv_rmse_std", "mae", "mape", "mse", "rmse", "msle",
+              "r2", "adjusted_r2"],
+             f"regression_all_configs_{title}.csv")
+
     # Best hyperparameter configuration of each model according to the cross validation
     # (in regression the best one is the one with the LOWEST error)
     best = {}
@@ -634,7 +660,7 @@ def data_regr(df):
     summary = []
     for name, (Xtr, ytr, Xte, yte) in reduced.items():
         print(f"\n########## {name} ##########")
-        results = regression(Xtr, ytr, Xte, yte)
+        results = regression(Xtr, ytr, Xte, yte, title=name)
 
         # Table: best configuration of every model and the value of every metric on the test set
         rows = []
