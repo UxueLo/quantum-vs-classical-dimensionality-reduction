@@ -45,6 +45,14 @@ from sklearn.base import clone
 from sklearn.tree import plot_tree
 from sklearn.calibration import CalibratedClassifierCV
 from sklearn.metrics import roc_curve, precision_recall_curve
+import optuna # Automatic hyperparameter optimization
+optuna.logging.set_verbosity(optuna.logging.WARNING) # one line per trial would flood the console
+
+# Optuna configuration
+N_TRIALS = 30 # number of trials (hyperparameter configurations tried) per model
+OPTUNA_SEED = 42 # seed of the sampler: makes the search reproducible between runs
+SAVE_OPTUNA_PLOTS = True # To save the optimization history and parameter importance of every study as HTML
+
 
 def reduce_all(X_train, y_train, X_test, y_test):
     
@@ -98,6 +106,7 @@ def reduce_all(X_train, y_train, X_test, y_test):
         "AE": (X_train_ae, y_train, X_test_ae, y_test),
         "Z_MAP": (X_train_z_map, y_train, X_test_z_map, y_test),
     }
+
 #Function that computes all the evaluation metrics seen in class (03_c_Model_Evaluation)
 def evaluation(y_test, y_pred, y_proba, classes):
     # Confusion matrix: row i = real class i, column j = predicted class j
@@ -227,6 +236,50 @@ def save_csv(rows, columns, filename, folder="results"):
         writer.writeheader()
         writer.writerows(rows)
 
+#Conditional search space for the maxi depth of a tree
+#Optuna decides if the depth is limited at all (None = unlimited) and, only in that case, which depth to use
+def suggest_max_depth(trial, low=2, high=20):
+    if trial.suggest_categorical("limit_depth", [True, False]):
+        return trial.suggest_int("max_depth", low, high)
+    return None
+
+
+#Function that saves the Optuna visualizations of a study as HTML files 
+def save_optuna_plots(study, name, folder="results"):
+    try:
+        import optuna.visualization as vis
+    except ImportError:
+        return
+    os.makedirs(folder, exist_ok=True)
+    safe_name = name.replace(" ", "_")
+    for plot_name, plot_function in [("history", vis.plot_optimization_history),
+                                     ("importance", vis.plot_param_importances)]:
+        try:
+            plot_function(study).write_html(os.path.join(folder, f"optuna_{plot_name}_{safe_name}.html"))
+        except Exception:
+            # plotly not installed, or not enough trials / parameters to compute the plot
+            pass
+
+
+#Function that optimizes the hyperparameters of ONE model with Optuna and returns the result of every completed trial
+def run_optuna_search(model_name, space, evaluate_trial, direction, n_trials, study_name):
+    results = []
+
+    def objective(trial):
+        model, hyperparameters = space(trial)
+        score, result = evaluate_trial(model, hyperparameters)
+        result["model"] = model_name
+        results.append(result)
+        return score
+
+    study = optuna.create_study(direction=direction, study_name=study_name,
+                                sampler=optuna.samplers.TPESampler(seed=OPTUNA_SEED))
+    study.optimize(objective, n_trials=n_trials)
+
+    if SAVE_OPTUNA_PLOTS and results:
+        save_optuna_plots(study, study_name)
+    return results
+
 
 #Function that applies classification
 def classification(X_train, y_train, X_test, y_test, title="dataset"):
@@ -238,68 +291,87 @@ def classification(X_train, y_train, X_test, y_test, title="dataset"):
         raise ValueError("Every class needs at least 2 examples in the train set")
     kf = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=0)
 
-    # Hyperparameter configurations we want to try for each model
-    configs = []
+    # Hyperparameter search space of each model. Instead of a fixed grid, Optuna (TPE sampler)
+    # decides which configuration to try next, using the results of the previous trials
 
     # CART (Decision Tree)
     #  - splitting criterion: Gini index (CART) or entropy / information gain (ID3)
     #  - prepruning: max_depth and min_samples_leaf stop the tree construction early
     #  - postpruning: ccp_alpha is the cost complexity pruning of CART
-    for criterion in ["gini", "entropy"]:
-        for max_depth in [2, 3, 5, None]:
-            for min_samples_leaf in [1, 5]:
-                for ccp_alpha in [0.0, 0.01, 0.05]:
-                    clf = DecisionTreeClassifier(criterion=criterion, max_depth=max_depth,
-                                                 min_samples_leaf=min_samples_leaf,
-                                                 ccp_alpha=ccp_alpha, random_state=42)
-                    hyperparameters = {"splitting_criterion": criterion,
-                                       "max_depth (prepruning)": max_depth,
-                                       "min_samples_leaf (prepruning)": min_samples_leaf,
-                                       "cost_complexity_alpha (postpruning)": ccp_alpha}
-                    configs.append(("CART", clf, hyperparameters))
+    def space_cart(trial):
+        criterion = trial.suggest_categorical("criterion", ["gini", "entropy"])
+        max_depth = suggest_max_depth(trial, 2, 20)
+        min_samples_leaf = trial.suggest_int("min_samples_leaf", 1, 20)
+        ccp_alpha = trial.suggest_float("ccp_alpha", 0.0, 0.1)
+        clf = DecisionTreeClassifier(criterion=criterion, max_depth=max_depth,
+                                     min_samples_leaf=min_samples_leaf,
+                                     ccp_alpha=ccp_alpha, random_state=42)
+        hyperparameters = {"splitting_criterion": criterion,
+                           "max_depth (prepruning)": max_depth,
+                           "min_samples_leaf (prepruning)": min_samples_leaf,
+                           "cost_complexity_alpha (postpruning)": round(ccp_alpha, 5)}
+        return clf, hyperparameters
 
     # Gaussian Naive Bayes
     #  - var_smoothing: the small positive variance floor used when a feature
     #    has zero variance inside a class
-    for var_smoothing in [1e-12, 1e-9, 1e-6, 1e-3]:
+    def space_naive_bayes(trial):
+        var_smoothing = trial.suggest_float("var_smoothing", 1e-12, 1e-1, log=True)
         clf = GaussianNB(var_smoothing=var_smoothing)
         hyperparameters = {"variance_floor (var_smoothing)": var_smoothing}
-        configs.append(("Gaussian Naive Bayes", clf, hyperparameters))
+        return clf, hyperparameters
 
     # Support Vector Machines (SVM)
     # We evaluate the admissible kernels seen in theory: linear, rbf, poly, sigmoid
-    for kernel in ["linear", "rbf", "poly", "sigmoid"]:
-        for C_val in [0.1, 1.0, 10.0]:
-            # The probability=True parameter is mandatory to compute roc_auc and pr_auc in evaluation().
-            # max_iter limits the iterations: with some data (e.g. the poly kernel) the SVM can take
-            # forever to converge. The data is standardized because the SVM depends on the scale
-            clf = make_pipeline(StandardScaler(),
-                                SVC(kernel=kernel, C=C_val, probability=True, random_state=42,
-                                    max_iter=100000))
-            hyperparameters = {"kernel": kernel, "C": C_val}
-            configs.append(("SVM", clf, hyperparameters))
+    #  - C: regularization strength (log scale)
+    #  - gamma: kernel coefficient (log scale). Not used by the linear kernel, so it is conditional
+    #  - degree: degree of the polynomial, only for the poly kernel
+    def space_svm(trial):
+        kernel = trial.suggest_categorical("kernel", ["linear", "rbf", "poly", "sigmoid"])
+        C_val = trial.suggest_float("C", 1e-2, 1e2, log=True)
+        hyperparameters = {"kernel": kernel, "C": round(C_val, 5)}
+        svc_params = {}
+        if kernel != "linear":
+            svc_params["gamma"] = trial.suggest_float("gamma", 1e-3, 1e1, log=True)
+            hyperparameters["gamma"] = round(svc_params["gamma"], 5)
+        if kernel == "poly":
+            svc_params["degree"] = trial.suggest_int("degree", 2, 5)
+            hyperparameters["degree"] = svc_params["degree"]
+        # The probability=True parameter is mandatory to compute roc_auc and pr_auc in evaluation().
+        # max_iter limits the iterations: with some data (e.g. the poly kernel) the SVM can take
+        # forever to converge. The data is standardized because the SVM depends on the scale
+        clf = make_pipeline(StandardScaler(),
+                            SVC(kernel=kernel, C=C_val, probability=True, random_state=42,
+                                max_iter=100000, **svc_params))
+        return clf, hyperparameters
 
     # Random Forest
     # Ensemble method that creates multiple decision trees to reduce variance and overfitting
     #  - n_estimators: number of trees in the forest
-    #  - max_features: feature randomness, number of features each tree can pick from ("sqrt" or all)
+    #  - max_features: feature randomness, number of features each tree can pick from ("sqrt", "log2" or all)
     #  - max_depth: prepruning of every tree
-    for n_estimators in [50, 100, 200]:
-        for max_depth in [None, 3, 5, 10]:
-            for max_features in ["sqrt", None]:
-                clf = RandomForestClassifier(n_estimators=n_estimators, max_depth=max_depth,
-                                             max_features=max_features, random_state=42)
-                hyperparameters = {"n_estimators": n_estimators, "max_depth": max_depth,
-                                   "max_features (feature randomness)": max_features}
-                configs.append(("Random Forest", clf, hyperparameters))
+    def space_random_forest(trial):
+        n_estimators = trial.suggest_int("n_estimators", 50, 300, step=50)
+        max_depth = suggest_max_depth(trial, 2, 15)
+        max_features = trial.suggest_categorical("max_features", ["sqrt", "log2", None])
+        clf = RandomForestClassifier(n_estimators=n_estimators, max_depth=max_depth,
+                                     max_features=max_features, random_state=42)
+        hyperparameters = {"n_estimators": n_estimators, "max_depth": max_depth,
+                           "max_features (feature randomness)": max_features}
+        return clf, hyperparameters
 
-    results = []
-    for name, clf, hyperparameters in configs:
+    spaces = [("CART", space_cart),
+              ("Gaussian Naive Bayes", space_naive_bayes),
+              ("SVM", space_svm),
+              ("Random Forest", space_random_forest)]
+
+    # Optuna optimizes the mean accuracy of the cross validation, using only the train set
+    def evaluate_trial(clf, hyperparameters):
         # Accuracy of every fold, using only the train set
         accs = cross_val_score(clf, X_train, y_train, cv=kf)
         cv_acc = sum(accs) / len(accs)
 
-        # Train with the whole train set and evaluate on test. Speed: training time
+        # Train with the whole train set and evaluate on test
         start = time.perf_counter()
         clf = clf.fit(X_train, y_train)
         train_time = time.perf_counter() - start
@@ -307,16 +379,23 @@ def classification(X_train, y_train, X_test, y_test, title="dataset"):
         y_proba = clf.predict_proba(X_test)
         metrics = evaluation(y_test, y_pred, y_proba, clf.classes_)
 
-        results.append({"model": name, "hyperparameters": hyperparameters,
-                        "cv_accuracy": round(float(cv_acc), 3),
-                        "cv_accuracy_std": round(float(np.std(accs)), 3),
-                        "train_time_s": round(train_time, 4),
-                        "cv_scores": accs,
-                        "test_metrics": {k: (round(float(v), 3) if k != "confusion_matrix" else v)
-                                         for k, v in metrics.items()},
-                        "clf": clf, "y_proba": y_proba, "classes": clf.classes_})
+        result = {"hyperparameters": hyperparameters,
+                  "cv_accuracy": round(float(cv_acc), 3),
+                  "cv_accuracy_std": round(float(np.std(accs)), 3),
+                  "train_time_s": round(train_time, 4),
+                  "cv_scores": accs,
+                  "test_metrics": {k: (round(float(v), 3) if k != "confusion_matrix" else v)
+                                   for k, v in metrics.items()},
+                  "clf": clf, "y_proba": y_proba, "classes": clf.classes_}
+        return float(cv_acc), result
 
-    # Table with every configuration tried, saved as a CSV in the "results" folder
+    # One Optuna study per model to maximize the cross validation accuracy
+    results = []
+    for name, space in spaces:
+        results += run_optuna_search(name, space, evaluate_trial, direction="maximize",
+                                     n_trials=N_TRIALS, study_name=f"classification_{title}_{name}")
+
+    # Table with every configuration tried (one row per Optuna trial), saved as a CSV in the "results" folder
     save_csv([{"model": r["model"], "hyperparameters": r["hyperparameters"], "cv_accuracy": r["cv_accuracy"],
                "cv_accuracy_std": r["cv_accuracy_std"], "train_time_s": r["train_time_s"], **r["test_metrics"]}
               for r in results],
@@ -383,8 +462,8 @@ def data_class(df):
                     for r in results]
         print_table(cal_rows, ["model", "brier_uncalibrated", "brier_sigmoid", "brier_isotonic", "train_time_s"])
 
-        # Hyperparameters and confusion matrix of every model
-        print("\nBest hyperparameters and confusion matrix:")
+        # Hyperparameters (found by Optuna) and confusion matrix of every model
+        print("\nBest hyperparameters (Optuna) and confusion matrix:")
         for r in results:
             print(f"   {r['model']}: {r['hyperparameters']}  confusion_matrix={r['test_metrics']['confusion_matrix']}")
 
@@ -499,125 +578,173 @@ def regression(X_train, y_train, X_test, y_test, title="dataset"):
         return TransformedTargetRegressor(regressor=make_pipeline(StandardScaler(), model),
                                           transformer=StandardScaler())
 
-    # Hyperparameter configurations we want to try for each model
-    configs = []
+    # Instead of a fixed grid Optuna decides which configuration to try next using the results of the previous trials
 
-    # Ordinary Least Squares (OLS): no hyperparameters
-    configs.append(("OLS", LinearRegression(), {}))
+    # Ordinary Least Squares (OLS): no hyperparameters (a single trial is enough)
+    def space_ols(trial):
+        return LinearRegression(), {}
 
     # Ridge regression (L2 regularization). alpha = strength of the regularization
-    for alpha in [0.01, 0.1, 1.0, 10.0, 100.0]:
-        configs.append(("Ridge", Ridge(alpha=alpha), {"alpha (L2 regularization)": alpha}))
+    def space_ridge(trial):
+        alpha = trial.suggest_float("alpha", 1e-3, 1e3, log=True)
+        return Ridge(alpha=alpha), {"alpha (L2 regularization)": round(alpha, 5)}
 
     # Lasso regression (L1 regularization, sets some coefficients to zero)
-    for alpha in [0.001, 0.01, 0.1, 1.0, 10.0]:
-        configs.append(("Lasso", Lasso(alpha=alpha, max_iter=10000),
-                        {"alpha (L1 regularization)": alpha}))
+    def space_lasso(trial):
+        alpha = trial.suggest_float("alpha", 1e-4, 1e1, log=True)
+        return Lasso(alpha=alpha, max_iter=10000), {"alpha (L1 regularization)": round(alpha, 5)}
 
     # Elastic Net: mix of Ridge and Lasso. l1_ratio = proportion of L1
-    for alpha in [0.001, 0.01, 0.1, 1.0]:
-        for l1_ratio in [0.2, 0.5, 0.8]:
-            configs.append(("Elastic Net", ElasticNet(alpha=alpha, l1_ratio=l1_ratio, max_iter=10000),
-                            {"alpha": alpha, "l1_ratio": l1_ratio}))
+    def space_elastic_net(trial):
+        alpha = trial.suggest_float("alpha", 1e-4, 1e1, log=True)
+        l1_ratio = trial.suggest_float("l1_ratio", 0.05, 0.95)
+        return (ElasticNet(alpha=alpha, l1_ratio=l1_ratio, max_iter=10000),
+                {"alpha": round(alpha, 5), "l1_ratio": round(l1_ratio, 3)})
 
-    # Stochastic Gradient Descent (SGD) regression
-    for penalty in ["l2", "l1", "elasticnet"]:
-        for alpha in [0.0001, 0.001, 0.01]:
-            configs.append(("SGD", scaled(SGDRegressor(penalty=penalty, alpha=alpha, max_iter=5000,
-                                                       random_state=42)),
-                            {"penalty": penalty, "alpha": alpha}))
+    # Stochastic Gradient Descent (SGD) regression. l1_ratio only exists with the elasticnet penalty
+    def space_sgd(trial):
+        penalty = trial.suggest_categorical("penalty", ["l2", "l1", "elasticnet"])
+        alpha = trial.suggest_float("alpha", 1e-5, 1e-1, log=True)
+        sgd_params = {}
+        hyperparameters = {"penalty": penalty, "alpha": round(alpha, 6)}
+        if penalty == "elasticnet":
+            sgd_params["l1_ratio"] = trial.suggest_float("l1_ratio", 0.05, 0.95)
+            hyperparameters["l1_ratio"] = round(sgd_params["l1_ratio"], 3)
+        model = scaled(SGDRegressor(penalty=penalty, alpha=alpha, max_iter=5000, random_state=42,
+                                    **sgd_params))
+        return model, hyperparameters
 
     # Polynomial regression: Polynomial Features + a linear regression (04_b notebook).
     # degree = degree of the polynomial (usually not greater than 3 or 4, to avoid overfitting)
-    for degree in [2, 3, 4]:
-        for alpha in [0.0, 1.0]:
-            linear = LinearRegression() if alpha == 0.0 else Ridge(alpha=alpha)
-            model = make_pipeline(PolynomialFeatures(degree=degree), StandardScaler(), linear)
-            configs.append(("Polynomial Regression", model,
-                            {"degree": degree, "linear_model": "OLS" if alpha == 0.0 else f"Ridge(alpha={alpha})"}))
+    def space_polynomial(trial):
+        degree = trial.suggest_int("degree", 2, 4)
+        linear_model = trial.suggest_categorical("linear_model", ["OLS", "Ridge"])
+        if linear_model == "Ridge":
+            alpha = trial.suggest_float("ridge_alpha", 1e-2, 1e2, log=True)
+            linear, label = Ridge(alpha=alpha), f"Ridge(alpha={alpha:.4g})"
+        else:
+            linear, label = LinearRegression(), "OLS"
+        model = make_pipeline(PolynomialFeatures(degree=degree), StandardScaler(), linear)
+        return model, {"degree": degree, "linear_model": label}
 
     # Robust regression 1: RANSAC combined with OLS (04_c notebook)
     #  - max_trials: number of iterations
     #  - min_samples: minimum proportion of randomly chosen training examples
     #  - residual_threshold: max distance to the line to be an inlier (None = MAD, the default)
-    for min_samples in [0.5, 0.95]:
-        for threshold_factor in [None, 0.5, 2.0]:
-            threshold = None if threshold_factor is None or mad == 0 else threshold_factor * mad
-            configs.append(("RANSAC", RANSACRegressor(LinearRegression(), max_trials=100,
-                                                      min_samples=min_samples,
-                                                      residual_threshold=threshold, random_state=42),
-                            {"max_trials": 100, "min_samples": min_samples,
-                             "residual_threshold": "MAD (default)" if threshold is None
-                             else f"{threshold_factor} x MAD"}))
+    def space_ransac(trial):
+        max_trials = trial.suggest_int("max_trials", 50, 300, step=50)
+        min_samples = trial.suggest_float("min_samples", 0.3, 0.99)
+        if trial.suggest_categorical("default_threshold", [True, False]) or mad == 0:
+            threshold, threshold_label = None, "MAD (default)"
+        else:
+            threshold_factor = trial.suggest_float("threshold_factor", 0.1, 5.0, log=True)
+            threshold, threshold_label = threshold_factor * mad, f"{threshold_factor:.3g} x MAD"
+        model = RANSACRegressor(LinearRegression(), max_trials=max_trials, min_samples=min_samples,
+                                residual_threshold=threshold, random_state=42)
+        return model, {"max_trials": max_trials, "min_samples": round(min_samples, 3),
+                       "residual_threshold": threshold_label}
 
     # Robust regression 2: Theil-Sen. max_subpopulation limits the combinations (and the runtime)
-    for max_subpopulation in [1000, 10000]:
-        configs.append(("Theil-Sen", TheilSenRegressor(max_subpopulation=max_subpopulation, random_state=42),
-                        {"max_subpopulation": max_subpopulation}))
+    def space_theil_sen(trial):
+        max_subpopulation = trial.suggest_int("max_subpopulation", 500, 10000, log=True)
+        return (TheilSenRegressor(max_subpopulation=max_subpopulation, random_state=42),
+                {"max_subpopulation": max_subpopulation})
 
     # Robust regression 3: Huber. epsilon = threshold where the loss changes from MSE to MAE
-    # (1.35 is the value recommended in class: 95% efficiency with normal errors)
-    for epsilon in [1.35, 1.5, 1.75, 1.9]:
-        for alpha in [0.0001, 0.01]:
-            configs.append(("Huber", HuberRegressor(epsilon=epsilon, alpha=alpha, max_iter=1000),
-                            {"epsilon": epsilon, "alpha (L2 regularization)": alpha}))
+    # (1.35 is the value recommended in class: 95% efficiency with normal errors). It must be > 1
+    def space_huber(trial):
+        epsilon = trial.suggest_float("epsilon", 1.1, 3.0)
+        alpha = trial.suggest_float("alpha", 1e-5, 1e-1, log=True)
+        return (HuberRegressor(epsilon=epsilon, alpha=alpha, max_iter=1000),
+                {"epsilon": round(epsilon, 3), "alpha (L2 regularization)": round(alpha, 6)})
 
     # Additional regression methods in sklearn seen in class
     # Decision Tree regression (prepruning with max_depth and min_samples_leaf)
-    for max_depth in [3, 5, 10, None]:
-        for min_samples_leaf in [1, 5]:
-            configs.append(("Decision Tree", DecisionTreeRegressor(max_depth=max_depth,
-                                                                   min_samples_leaf=min_samples_leaf,
-                                                                   random_state=42),
-                            {"max_depth (prepruning)": max_depth,
-                             "min_samples_leaf (prepruning)": min_samples_leaf}))
+    def space_decision_tree(trial):
+        max_depth = suggest_max_depth(trial, 2, 20)
+        min_samples_leaf = trial.suggest_int("min_samples_leaf", 1, 30)
+        model = DecisionTreeRegressor(max_depth=max_depth, min_samples_leaf=min_samples_leaf,
+                                      random_state=42)
+        return model, {"max_depth (prepruning)": max_depth,
+                       "min_samples_leaf (prepruning)": min_samples_leaf}
 
     # Random Forest regression
-    for n_estimators in [50, 100]:
-        for max_depth in [None, 5, 10]:
-            configs.append(("Random Forest", RandomForestRegressor(n_estimators=n_estimators,
-                                                                   max_depth=max_depth,
-                                                                   random_state=42, n_jobs=-1),
-                            {"n_estimators": n_estimators, "max_depth": max_depth}))
+    def space_random_forest(trial):
+        n_estimators = trial.suggest_int("n_estimators", 50, 200, step=50)
+        max_depth = suggest_max_depth(trial, 2, 15)
+        model = RandomForestRegressor(n_estimators=n_estimators, max_depth=max_depth,
+                                      random_state=42, n_jobs=-1)
+        return model, {"n_estimators": n_estimators, "max_depth": max_depth}
 
-    # Support Vector Regression (SVR)
-    for kernel in ["linear", "rbf", "poly"]:
-        for C_val in [0.1, 1.0, 10.0]:
-            configs.append(("SVR", scaled(SVR(kernel=kernel, C=C_val)), {"kernel": kernel, "C": C_val}))
+    # Support Vector Regression (SVR). gamma is not used by the linear kernel, degree only by poly
+    def space_svr(trial):
+        kernel = trial.suggest_categorical("kernel", ["linear", "rbf", "poly"])
+        C_val = trial.suggest_float("C", 1e-2, 1e2, log=True)
+        epsilon = trial.suggest_float("epsilon", 1e-3, 1.0, log=True)
+        hyperparameters = {"kernel": kernel, "C": round(C_val, 5), "epsilon": round(epsilon, 5)}
+        svr_params = {}
+        if kernel != "linear":
+            svr_params["gamma"] = trial.suggest_float("gamma", 1e-3, 1e1, log=True)
+            hyperparameters["gamma"] = round(svr_params["gamma"], 5)
+        if kernel == "poly":
+            svr_params["degree"] = trial.suggest_int("degree", 2, 4)
+            hyperparameters["degree"] = svr_params["degree"]
+        return scaled(SVR(kernel=kernel, C=C_val, epsilon=epsilon, **svr_params)), hyperparameters
 
-    # Nearest neighbor regression (KNN)
-    for n_neighbors in [3, 5, 10]:
-        if n_neighbors > min_fold_train:
-            continue
-        for weights in ["uniform", "distance"]:
-            configs.append(("KNN", scaled(KNeighborsRegressor(n_neighbors=n_neighbors, weights=weights)),
-                            {"n_neighbors": n_neighbors, "weights": weights}))
+    # Nearest neighbor regression (KNN). It can't use more neighbors than the smallest train fold
+    def space_knn(trial):
+        n_neighbors = trial.suggest_int("n_neighbors", 1, max(1, min(30, min_fold_train)))
+        weights = trial.suggest_categorical("weights", ["uniform", "distance"])
+        model = scaled(KNeighborsRegressor(n_neighbors=n_neighbors, weights=weights))
+        return model, {"n_neighbors": n_neighbors, "weights": weights}
 
-    results = []
-    for name, model, hyperparameters in configs:
-        # RMSE of every fold, using only the train set (the main metric in the 04_g notebook).
-        # If a configuration fails in some fold (e.g. RANSAC can't find inliers) it is discarded
+    # (model name, search space, number of trials)
+    spaces = [("OLS", space_ols, 1),
+              ("Ridge", space_ridge, N_TRIALS),
+              ("Lasso", space_lasso, N_TRIALS),
+              ("Elastic Net", space_elastic_net, N_TRIALS),
+              ("SGD", space_sgd, N_TRIALS),
+              ("Polynomial Regression", space_polynomial, N_TRIALS),
+              ("RANSAC", space_ransac, N_TRIALS),
+              ("Theil-Sen", space_theil_sen, N_TRIALS),
+              ("Huber", space_huber, N_TRIALS),
+              ("Decision Tree", space_decision_tree, N_TRIALS),
+              ("Random Forest", space_random_forest, N_TRIALS),
+              ("SVR", space_svr, N_TRIALS),
+              ("KNN", space_knn, N_TRIALS)]
+
+    # Optuna optimizes the mean RMSE of the cross validation using only the train set
+    def evaluate_trial(model, hyperparameters):
+        # If a configuration fails in some fold (ex. RANSAC can't find inliers) the trial is pruned
         scores = cross_val_score(model, X_train, y_train, cv=kf,
                                  scoring="neg_root_mean_squared_error", error_score=np.nan)
         rmses = -scores
         if np.any(np.isnan(rmses)):
-            continue
+            raise optuna.TrialPruned()
 
         # Train with the whole train set and evaluate on test
         try:
             model = model.fit(X_train, y_train)
         except ValueError:
-            continue
+            raise optuna.TrialPruned()
         y_pred = model.predict(X_test)
         metrics = evaluation_regression(y_test, y_pred, n_features=X_train.shape[1])
 
-        results.append({"model": name, "hyperparameters": hyperparameters,
-                        "cv_rmse": round(float(np.mean(rmses)), 3),
-                        "cv_rmse_std": round(float(np.std(rmses)), 3),
-                        "cv_scores": rmses,
-                        "test_metrics": {k: round(float(v), 3) for k, v in metrics.items()}})
+        result = {"hyperparameters": hyperparameters,
+                  "cv_rmse": round(float(np.mean(rmses)), 3),
+                  "cv_rmse_std": round(float(np.std(rmses)), 3),
+                  "cv_scores": rmses,
+                  "test_metrics": {k: round(float(v), 3) for k, v in metrics.items()}}
+        return float(np.mean(rmses)), result
 
-    # Table with every configuration tried (04_g notebook), saved as a CSV in the "results" folder
+    # One Optuna study per model to minimize the cross validation RMSE
+    results = []
+    for name, space, n_trials in spaces:
+        results += run_optuna_search(name, space, evaluate_trial, direction="minimize",
+                                     n_trials=n_trials, study_name=f"regression_{title}_{name}")
+
+    # Table with every configuration tried (04_g notebook, one row per Optuna trial),
+    # saved as a CSV in the "results" folder
     save_csv([{"model": r["model"], "hyperparameters": r["hyperparameters"], "cv_rmse": r["cv_rmse"],
                "cv_rmse_std": r["cv_rmse_std"], **r["test_metrics"]} for r in results],
              ["model", "hyperparameters", "cv_rmse", "cv_rmse_std", "mae", "mape", "mse", "rmse", "msle",
@@ -675,8 +802,8 @@ def data_regr(df):
         print(f"\nStatistical tests between models: {result['conclusion']}"
               + (f" -> {', '.join(result['different_pairs'])}" if result.get("different_pairs") else ""))
 
-        # Hyperparameters chosen for every model
-        print("\nBest hyperparameters:")
+        # Hyperparameters chosen by Optuna for every model
+        print("\nBest hyperparameters (Optuna):")
         for r in results:
             print(f"   {r['model']}: {r['hyperparameters']}")
 
