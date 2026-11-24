@@ -1,7 +1,7 @@
 import numpy as np
 import umap
 from sklearn.datasets import load_iris
-from sklearn.decomposition import KernelPCA
+from sklearn.decomposition import KernelPCA, PCA
 from sklearn.model_selection import train_test_split, cross_val_score, StratifiedKFold
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.tree import DecisionTreeClassifier
@@ -28,6 +28,9 @@ from sklearn.tree import DecisionTreeRegressor
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.svm import SVR
 from sklearn.neighbors import KNeighborsRegressor
+from sklearn.linear_model import QuantileRegressor
+from sklearn.gaussian_process import GaussianProcessRegressor
+from sklearn.gaussian_process.kernels import RBF, Matern, RationalQuadratic
 from sklearn.metrics import (mean_absolute_error, mean_absolute_percentage_error, mean_squared_error,
                              mean_squared_log_error, r2_score)
 
@@ -58,6 +61,11 @@ def reduce_all(X_train, y_train, X_test, y_test):
     
     # Number of dimensions we want after the reduction
     n_qubits = 4
+
+    # PCA (linear). It's fit only on train
+    pca = PCA(n_components=n_qubits)
+    X_train_linear_pca = pca.fit_transform(X_train)
+    X_test_linear_pca = pca.transform(X_test)
 
     # KernelPCA. It's fit only on train
     kpca = KernelPCA(n_components=n_qubits, kernel="rbf")
@@ -101,7 +109,8 @@ def reduce_all(X_train, y_train, X_test, y_test):
 
     # Return every reduced dataset, named with it's reduction method
     return {
-        "PCA": (X_train_pca, y_train, X_test_pca, y_test),
+        "PCA": (X_train_linear_pca, y_train, X_test_linear_pca, y_test),
+        "KernelPCA": (X_train_pca, y_train, X_test_pca, y_test),
         "UMAP": (X_train_umap, y_train, X_test_umap, y_test),
         "AE": (X_train_ae, y_train, X_test_ae, y_test),
         "Z_MAP": (X_train_z_map, y_train, X_test_z_map, y_test),
@@ -164,6 +173,20 @@ def evaluation(y_test, y_pred, y_proba, classes):
         "confusion_matrix": cm.tolist(),
     }
 
+#Scores used to compute ROC AUC, PR AUC and the curves. The predict_proba of the SVM is computed with an
+#internal cross validation (Platt scaling) and sklearn warns it can be inconsistent with predict(): with some
+#hyperparameters the probabilities are inverted (ROC AUC close to 0 with high accuracy). For models with a
+#decision_function (the SVM) its scores are used instead, because they always agree with the predictions.
+#They are converted to values between 0 and 1 that sum 1 per row (softmax), as roc_auc_score needs in multiclass
+def ranking_scores(clf, X, y_proba):
+    if not hasattr(clf, "decision_function"):
+        return y_proba
+    d = np.asarray(clf.decision_function(X), dtype=float)
+    if d.ndim == 1:
+        # Binary problem: one score per example, positive means the second class
+        return np.column_stack([-d, d])
+    e = np.exp(d - d.max(axis=1, keepdims=True))
+    return e / e.sum(axis=1, keepdims=True)
 
 #Brier score: mean squared error between the predicted probabilities and the real class
 #(0 = perfectly calibrated). Used to measure the probability calibration
@@ -376,7 +399,7 @@ def classification(X_train, y_train, X_test, y_test, title="dataset"):
         clf = clf.fit(X_train, y_train)
         train_time = time.perf_counter() - start
         y_pred = clf.predict(X_test)
-        y_proba = clf.predict_proba(X_test)
+        y_proba = ranking_scores(clf, X_test, clf.predict_proba(X_test))
         metrics = evaluation(y_test, y_pred, y_proba, clf.classes_)
 
         result = {"hyperparameters": hyperparameters,
@@ -437,8 +460,7 @@ def data_class(df):
 
     metric_names = ["accuracy", "error_rate", "sensitivity", "specificity", "g_mean", "precision",
                     "recall", "f1", "f1_micro", "f1_weighted", "f0.5", "f2", "mcc", "roc_auc", "pr_auc"]
-    best_cv = {}
-    summary = []
+
     for name, (Xtr, ytr, Xte, yte) in reduced.items():
         print(f"\n########## {name} ##########")
         results = classification(Xtr, ytr, Xte, yte, title=name)
@@ -466,28 +488,6 @@ def data_class(df):
         print("\nBest hyperparameters (Optuna) and confusion matrix:")
         for r in results:
             print(f"   {r['model']}: {r['hyperparameters']}  confusion_matrix={r['test_metrics']['confusion_matrix']}")
-
-        # Best model of this reduction method (highest cross validation accuracy)
-        best_overall = max(results, key=lambda r: r["cv_accuracy"])
-        best_cv[name] = best_overall["cv_scores"]
-        print(f"\nBest model: {best_overall['model']} {best_overall['hyperparameters']} "
-              f"(cv_accuracy={best_overall['cv_accuracy']}, test_f1={best_overall['test_metrics']['f1']})")
-        summary.append({"reduction": name, "best_model": best_overall["model"],
-                        "cv_accuracy": best_overall["cv_accuracy"],
-                        "test_accuracy": best_overall["test_metrics"]["accuracy"],
-                        "test_f1": best_overall["test_metrics"]["f1"],
-                        "test_mcc": best_overall["test_metrics"]["mcc"]})
-
-    # Final table: the best model of every reduction method, to compare them
-    print("\n=== Comparison of the reduction methods (best model of each one) ===")
-    print_table(summary, ["reduction", "best_model", "cv_accuracy", "test_accuracy", "test_f1", "test_mcc"])
-
-    # Statistical test between reduction methods, using the best model of each one
-    print("\n=== Statistical test between reduction methods (best model of each one, cross validation accuracy) ===")
-    result = statistical_tests(best_cv)
-    print(f"   {result['conclusion']}"
-          + (f" -> {', '.join(result['different_pairs'])}" if result.get("different_pairs") else ""))
-
 
 #Function that computes all the regression metrics seen in class (04_a_regression, "Evaluating Regression Models")
 def evaluation_regression(y_test, y_pred, n_features):
@@ -697,7 +697,27 @@ def regression(X_train, y_train, X_test, y_test, title="dataset"):
         weights = trial.suggest_categorical("weights", ["uniform", "distance"])
         model = scaled(KNeighborsRegressor(n_neighbors=n_neighbors, weights=weights))
         return model, {"n_neighbors": n_neighbors, "weights": weights}
+    
+    # Quantile regression: predicts a quantile of the target instead of the mean (more robust to outliers)
+    #  - quantile: which quantile is predicted (0.5 = the median)
+    #  - alpha: L1 regularization
+    def space_quantile(trial):
+        quantile = trial.suggest_float("quantile", 0.25, 0.75)
+        alpha = trial.suggest_float("alpha", 1e-5, 1.0, log=True)
+        model = scaled(QuantileRegressor(quantile=quantile, alpha=alpha, solver="highs"))
+        return model, {"quantile": round(quantile, 3), "alpha (L1 regularization)": round(alpha, 6)}
 
+    # Gaussian Process regression
+    #  - kernel: covariance function (similarity between examples). Its length scale is fitted automatically
+    #  - alpha: noise added to the diagonal (regularization)
+    def space_gaussian_process(trial):
+        kernel_name = trial.suggest_categorical("kernel", ["RBF", "Matern 1.5", "Matern 2.5", "RationalQuadratic"])
+        kernels = {"RBF": RBF(), "Matern 1.5": Matern(nu=1.5), "Matern 2.5": Matern(nu=2.5),
+                   "RationalQuadratic": RationalQuadratic()}
+        alpha = trial.suggest_float("alpha", 1e-3, 1.0, log=True)
+        model = scaled(GaussianProcessRegressor(kernel=kernels[kernel_name], alpha=alpha, random_state=42))
+        return model, {"kernel": kernel_name, "alpha (noise)": round(alpha, 5)}
+    
     # (model name, search space, number of trials)
     spaces = [("OLS", space_ols, 1),
               ("Ridge", space_ridge, N_TRIALS),
@@ -711,7 +731,9 @@ def regression(X_train, y_train, X_test, y_test, title="dataset"):
               ("Decision Tree", space_decision_tree, N_TRIALS),
               ("Random Forest", space_random_forest, N_TRIALS),
               ("SVR", space_svr, N_TRIALS),
-              ("KNN", space_knn, N_TRIALS)]
+              ("KNN", space_knn, N_TRIALS),
+              ("Quantile Regression", space_quantile, N_TRIALS),
+              ("Gaussian Process", space_gaussian_process, N_TRIALS)]
 
     # Optuna optimizes the mean RMSE of the cross validation using only the train set
     def evaluate_trial(model, hyperparameters):
@@ -783,8 +805,7 @@ def data_regr(df):
     reduced = reduce_all(X_train, y_train, X_test, y_test)
 
     metric_names = ["mae", "mape", "mse", "rmse", "msle", "r2", "adjusted_r2"]
-    best_cv = {}
-    summary = []
+
     for name, (Xtr, ytr, Xte, yte) in reduced.items():
         print(f"\n########## {name} ##########")
         results = regression(Xtr, ytr, Xte, yte, title=name)
@@ -806,26 +827,6 @@ def data_regr(df):
         print("\nBest hyperparameters (Optuna):")
         for r in results:
             print(f"   {r['model']}: {r['hyperparameters']}")
-
-        # Best model of this reduction method (lowest cross validation RMSE)
-        best_overall = min(results, key=lambda r: r["cv_rmse"])
-        best_cv[name] = best_overall["cv_scores"]
-        print(f"\nBest model: {best_overall['model']} {best_overall['hyperparameters']} "
-              f"(cv_rmse={best_overall['cv_rmse']}, test_r2={best_overall['test_metrics']['r2']})")
-        summary.append({"reduction": name, "best_model": best_overall["model"],
-                        "cv_rmse": best_overall["cv_rmse"],
-                        "test_rmse": best_overall["test_metrics"]["rmse"],
-                        "test_r2": best_overall["test_metrics"]["r2"]})
-
-    # Final table: the best model of every reduction method, to compare them
-    print("\n=== Comparison of the reduction methods (best model of each one) ===")
-    print_table(summary, ["reduction", "best_model", "cv_rmse", "test_rmse", "test_r2"])
-
-    # Statistical test between reduction methods, using the best model of each one
-    print("\n=== Statistical test between reduction methods (best model of each one, cross validation RMSE) ===")
-    result = statistical_tests(best_cv)
-    print(f"   {result['conclusion']}"
-          + (f" -> {', '.join(result['different_pairs'])}" if result.get("different_pairs") else ""))
 
 #Clustering application
 def data_clust(df):
