@@ -12,7 +12,10 @@ from sklearn.metrics import (accuracy_score, confusion_matrix, precision_score, 
 from sklearn.preprocessing import label_binarize
 from qiskit import QuantumCircuit
 from qiskit.circuit import ParameterVector
-from qiskit.circuit.library import ZZFeatureMap
+try:
+    from qiskit.circuit.library import zz_feature_map          # Qiskit >= 2.1
+except ImportError:                                            # older Qiskit versions
+    from qiskit.circuit.library import ZZFeatureMap
 from qiskit.quantum_info import Statevector, SparsePauliOp
 from sklearn.svm import SVC
 from sklearn.ensemble import RandomForestClassifier
@@ -56,64 +59,87 @@ N_TRIALS = 30 # number of trials (hyperparameter configurations tried) per model
 OPTUNA_SEED = 42 # seed of the sampler: makes the search reproducible between runs
 SAVE_OPTUNA_PLOTS = True # To save the optimization history and parameter importance of every study as HTML
 
+#Configuration for quantum kernel
+N_COMPONENTS = 4 # dimensions after the reduction (same for every method)
+MAX_QUBITS = 10 # 1 qubit per feature; with more features a linear PCA goes first
+QK_REPS = 2 # repetitions of the ZZ feature map
+QK_ENTANGLEMENT = "linear" # entanglement of the ZZ feature map
+QK_BANDWIDTHS = [1.0, 0.5, 0.25, 0.1, 0.05, 0.025]  # candidate fractions of [0, pi] used to scale the features
+
+#Function that returns the quantum state |phi(x)> of every row of X (exact simulation).
+#The result is a matrix (n_samples, 2**n_qubits)
+def quantum_statevectors(circuit, X):
+    return np.array([Statevector(circuit.assign_parameters(x)).data for x in X])
+
+
+#Function that computes the fidelity kernel K(a, b) = |<phi(a)|phi(b)>|^2 between two sets of states
+def fidelity_kernel(states_a, states_b):
+    return np.abs(states_a.conj() @ states_b.T) ** 2
+
+
+#Function that applies the quantum kernel PCA. Everything is fit only on the train set:
+def quantum_kernel_pca(circuit, X_train, X_test, n_components):
+    best = None
+    for bandwidth in QK_BANDWIDTHS:
+        scaler = MinMaxScaler(feature_range=(0.0, bandwidth * np.pi)).fit(X_train)
+        states_train = quantum_statevectors(circuit, scaler.transform(X_train))
+        K_train = fidelity_kernel(states_train, states_train)
+        spread = K_train[~np.eye(len(K_train), dtype=bool)].var()
+        if best is None or spread > best[0]:
+            best = (spread, bandwidth, scaler, states_train, K_train)
+    _, bandwidth, scaler, states_train, K_train = best
+
+    # The test set can fall outside the range seen in train so it is clipped to the valid angles
+    X_test_scaled = np.clip(scaler.transform(X_test), 0.0, bandwidth * np.pi)
+    K_test = fidelity_kernel(quantum_statevectors(circuit, X_test_scaled), states_train)
+
+    kpca = KernelPCA(n_components=n_components, kernel="precomputed")
+    return kpca.fit_transform(K_train), kpca.transform(K_test), bandwidth
+
 
 def reduce_all(X_train, y_train, X_test, y_test):
-    
+
     # Number of dimensions we want after the reduction
-    n_qubits = 4
+    n_components = N_COMPONENTS
 
-    # PCA (linear). It's fit only on train
-    pca = PCA(n_components=n_qubits)
-    X_train_linear_pca = pca.fit_transform(X_train)
-    X_test_linear_pca = pca.transform(X_test)
-
-    # KernelPCA. It's fit only on train
-    kpca = KernelPCA(n_components=n_qubits, kernel="rbf")
+    # KernelPCA (classical, rbf kernel). It's fit only on train
+    kpca = KernelPCA(n_components=n_components, kernel="rbf")
     X_train_pca = kpca.fit_transform(X_train)
     X_test_pca = kpca.transform(X_test)
 
     # UMAP, the random_state hyperparameter makes the result reproducible between runs
-    reducer = umap.UMAP(n_components=n_qubits, random_state=42)
+    reducer = umap.UMAP(n_components=n_components, random_state=42)
     X_train_umap = reducer.fit_transform(X_train)
     X_test_umap = reducer.transform(X_test)
 
-    #Scale the reduced features to a valid angle range. It's fit only on train
-    scaler = MinMaxScaler(feature_range=(0.0, np.pi))
-    X_train_scaled = scaler.fit_transform(X_train_pca)
-    X_test_scaled = scaler.transform(X_test_pca)
+    # The quantum circuits use 1 qubit per feature. If there are more features than MAX_QUBITS
+    # (which are too many qubits to simulate) a linear PCA is fit only on train to reduce them first
+    X_q_train, X_q_test = X_train, X_test
+    if X_train.shape[1] > MAX_QUBITS:
+        pre_reducer = PCA(n_components=MAX_QUBITS).fit(X_train)
+        X_q_train, X_q_test = pre_reducer.transform(X_train), pre_reducer.transform(X_test)
+    n_qubits = X_q_train.shape[1]
 
-    #Create a helper that runs a circuit on one sample and returns one real value per qubit
-    def expvals(circuit, x, pauli):
-        state = Statevector(circuit.assign_parameters(x))
-        return [
-            state.expectation_value(
-                SparsePauliOp.from_sparse_list([(pauli, [i], 1)], num_qubits=n_qubits)
-            ).real
-            for i in range(n_qubits)
-        ]
-
-    # Angle Encoding
+    # Quantum feature map 1: angle encoding (a RY rotation per qubit, product states, no entanglement)
     params = ParameterVector("x", n_qubits)
     angle_circuit = QuantumCircuit(n_qubits)
     for i in range(n_qubits):
         angle_circuit.ry(params[i], i)
 
-    X_train_ae = np.array([expvals(angle_circuit, x, "Z") for x in X_train_scaled])
-    X_test_ae = np.array([expvals(angle_circuit, x, "Z") for x in X_test_scaled])
+    # Quantum feature map 2: ZZ feature map (Hadamards + phases + entangling ZZ interactions)
+    zz_circuit = zz_feature_map(n_qubits, reps=QK_REPS, entanglement=QK_ENTANGLEMENT)
 
-    # ZZFeatureMap
-    zz_circuit = ZZFeatureMap(n_qubits)
-
-    X_train_z_map = np.array([expvals(zz_circuit, x, "X") for x in X_train_scaled])
-    X_test_z_map = np.array([expvals(zz_circuit, x, "X") for x in X_test_scaled])
+    X_train_angle, X_test_angle, bw_angle = quantum_kernel_pca(angle_circuit, X_q_train, X_q_test, n_components)
+    X_train_zz, X_test_zz, bw_zz = quantum_kernel_pca(zz_circuit, X_q_train, X_q_test, n_components)
+    print(f"Quantum kernel PCA: {n_qubits} qubits, {X_train.shape[1]} features -> {n_components} components "
+          f"(bandwidth: angle={bw_angle}, ZZ={bw_zz})")
 
     # Return every reduced dataset, named with it's reduction method
     return {
-        "PCA": (X_train_linear_pca, y_train, X_test_linear_pca, y_test),
-        "KernelPCA": (X_train_pca, y_train, X_test_pca, y_test),
+        "PCA": (X_train_pca, y_train, X_test_pca, y_test),
         "UMAP": (X_train_umap, y_train, X_test_umap, y_test),
-        "AE": (X_train_ae, y_train, X_test_ae, y_test),
-        "Z_MAP": (X_train_z_map, y_train, X_test_z_map, y_test),
+        "QKPCA_ANGLE": (X_train_angle, y_train, X_test_angle, y_test),
+        "QKPCA_ZZ": (X_train_zz, y_train, X_test_zz, y_test),
     }
 
 #Function that computes all the evaluation metrics seen in class (03_c_Model_Evaluation)
