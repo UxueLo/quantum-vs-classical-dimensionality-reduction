@@ -102,6 +102,11 @@ def reduce_all(X_train, y_train, X_test, y_test):
     # Number of dimensions we want after the reduction
     n_components = N_COMPONENTS
 
+    # PCA (linear). It's fit only on train
+    pca = PCA(n_components=n_components)
+    X_train_linear_pca = pca.fit_transform(X_train)
+    X_test_linear_pca = pca.transform(X_test)
+
     # KernelPCA (classical, rbf kernel). It's fit only on train
     kpca = KernelPCA(n_components=n_components, kernel="rbf")
     X_train_pca = kpca.fit_transform(X_train)
@@ -136,12 +141,12 @@ def reduce_all(X_train, y_train, X_test, y_test):
 
     # Return every reduced dataset, named with it's reduction method
     return {
-        "PCA": (X_train_pca, y_train, X_test_pca, y_test),
+        "PCA": (X_train_linear_pca, y_train, X_test_linear_pca, y_test),
+        "KernelPCA": (X_train_pca, y_train, X_test_pca, y_test),
         "UMAP": (X_train_umap, y_train, X_test_umap, y_test),
         "QKPCA_ANGLE": (X_train_angle, y_train, X_test_angle, y_test),
         "QKPCA_ZZ": (X_train_zz, y_train, X_test_zz, y_test),
     }
-
 #Function that computes all the evaluation metrics seen in class (03_c_Model_Evaluation)
 def evaluation(y_test, y_pred, y_proba, classes):
     # Confusion matrix: row i = real class i, column j = predicted class j
