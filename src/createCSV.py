@@ -26,7 +26,7 @@ from sklearn.preprocessing import LabelEncoder, MinMaxScaler, StandardScaler
  
 logger = logging.getLogger("createCSV")
  
-MODELO_GEMINI = "gemini-2.5-flash"
+MODELO_GEMINI = "gemini-3.8-flash"
 LAMBDA_REG = 1e-3
 MAX_QUBITS_SIM = 10          # el simulador estadovector crece como 2^n
 MAX_MUESTRAS = 200           # N máximo por dataset (los cálculos son O(N^3))
