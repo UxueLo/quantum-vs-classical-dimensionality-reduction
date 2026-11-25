@@ -1,0 +1,550 @@
+[
+  {
+    "archivo_origen": "2011.01938v2.pdf",
+    "paper_title": "Power of data in quantum machine learning",
+    "datasets": [
+      {
+        "dataset_name": "Dataset (C) - Fashion-MNIST (dresses vs shirts, PCA, N=800)",
+        "local_dataset_key": null,
+        "domain_type": "image",
+        "task_type": "classification",
+        "experimentos": [
+          {
+            "experiment_label": "QSVM E1 (Separable rotation encoding) up to 30q",
+            "quantum_model": "Quantum Kernel",
+            "classical_baseline": "Best classical ML",
+            "encoding_type": "E1 (Separable / Pauli-X rotation encoding)",
+            "n_qubits": 30,
+            "circuit_depth": null,
+            "is_real_hardware": false,
+            "metric_name": "prediction_error",
+            "score_classical": null,
+            "score_quantum": null,
+            "quantum_advantage_reported": false,
+            "kernel_concentration_observed": false
+          },
+          {
+            "experiment_label": "PQK E1 (Separable rotation encoding) up to 30q",
+            "quantum_model": "PQK",
+            "classical_baseline": "Best classical ML",
+            "encoding_type": "E1 (Separable / Pauli-X rotation encoding)",
+            "n_qubits": 30,
+            "circuit_depth": null,
+            "is_real_hardware": false,
+            "metric_name": "prediction_error",
+            "score_classical": null,
+            "score_quantum": null,
+            "quantum_advantage_reported": false,
+            "kernel_concentration_observed": false
+          },
+          {
+            "experiment_label": "QSVM E2 (IQP / Hadamard + Pauli-Z) up to 30q",
+            "quantum_model": "Quantum Kernel",
+            "classical_baseline": "Best classical ML",
+            "encoding_type": "E2 (IQP / H + Pauli-Z/ZZ)",
+            "n_qubits": 30,
+            "circuit_depth": null,
+            "is_real_hardware": false,
+            "metric_name": "prediction_error",
+            "score_classical": null,
+            "score_quantum": null,
+            "quantum_advantage_reported": false,
+            "kernel_concentration_observed": false
+          },
+          {
+            "experiment_label": "PQK E2 (IQP / Hadamard + Pauli-Z) up to 30q",
+            "quantum_model": "PQK",
+            "classical_baseline": "Best classical ML",
+            "encoding_type": "E2 (IQP / H + Pauli-Z/ZZ)",
+            "n_qubits": 30,
+            "circuit_depth": null,
+            "is_real_hardware": false,
+            "metric_name": "prediction_error",
+            "score_classical": null,
+            "score_quantum": null,
+            "quantum_advantage_reported": false,
+            "kernel_concentration_observed": false
+          },
+          {
+            "experiment_label": "QSVM E3 (Haar-random + Pauli evolution) up to 30q",
+            "quantum_model": "Quantum Kernel",
+            "classical_baseline": "Best classical ML",
+            "encoding_type": "E3 (Haar-random single-qubit states + Pauli evolution)",
+            "n_qubits": 30,
+            "circuit_depth": null,
+            "is_real_hardware": false,
+            "metric_name": "prediction_error",
+            "score_classical": null,
+            "score_quantum": null,
+            "quantum_advantage_reported": false,
+            "kernel_concentration_observed": false
+          },
+          {
+            "experiment_label": "PQK E3 (Haar-random + Pauli evolution) up to 30q",
+            "quantum_model": "PQK",
+            "classical_baseline": "Best classical ML",
+            "encoding_type": "E3 (Haar-random single-qubit states + Pauli evolution)",
+            "n_qubits": 30,
+            "circuit_depth": null,
+            "is_real_hardware": false,
+            "metric_name": "prediction_error",
+            "score_classical": null,
+            "score_quantum": null,
+            "quantum_advantage_reported": false,
+            "kernel_concentration_observed": false
+          }
+        ]
+      },
+      {
+        "dataset_name": "Dataset (Q, E1) - Quantum QNN labels on Fashion-MNIST with E1",
+        "local_dataset_key": null,
+        "domain_type": "synthetic",
+        "task_type": "regression",
+        "experimentos": [
+          {
+            "experiment_label": "Quantum Kernel on Dataset (Q, E1)",
+            "quantum_model": "Quantum Kernel",
+            "classical_baseline": "Best classical ML",
+            "encoding_type": "E1 (Separable / Pauli-X rotation encoding)",
+            "n_qubits": 30,
+            "circuit_depth": null,
+            "is_real_hardware": false,
+            "metric_name": "average_absolute_error",
+            "score_classical": null,
+            "score_quantum": null,
+            "quantum_advantage_reported": false,
+            "kernel_concentration_observed": false
+          },
+          {
+            "experiment_label": "PQK on Dataset (Q, E1)",
+            "quantum_model": "PQK",
+            "classical_baseline": "Best classical ML",
+            "encoding_type": "E1 (Separable / Pauli-X rotation encoding)",
+            "n_qubits": 30,
+            "circuit_depth": null,
+            "is_real_hardware": false,
+            "metric_name": "average_absolute_error",
+            "score_classical": null,
+            "score_quantum": null,
+            "quantum_advantage_reported": false,
+            "kernel_concentration_observed": false
+          }
+        ]
+      },
+      {
+        "dataset_name": "Dataset (Q, E2) - Quantum QNN labels on Fashion-MNIST with E2",
+        "local_dataset_key": null,
+        "domain_type": "synthetic",
+        "task_type": "regression",
+        "experimentos": [
+          {
+            "experiment_label": "Quantum Kernel on Dataset (Q, E2)",
+            "quantum_model": "Quantum Kernel",
+            "classical_baseline": "Best classical ML",
+            "encoding_type": "E2 (IQP / H + Pauli-Z/ZZ)",
+            "n_qubits": 30,
+            "circuit_depth": null,
+            "is_real_hardware": false,
+            "metric_name": "average_absolute_error",
+            "score_classical": null,
+            "score_quantum": null,
+            "quantum_advantage_reported": false,
+            "kernel_concentration_observed": false
+          },
+          {
+            "experiment_label": "PQK on Dataset (Q, E2)",
+            "quantum_model": "PQK",
+            "classical_baseline": "Best classical ML",
+            "encoding_type": "E2 (IQP / H + Pauli-Z/ZZ)",
+            "n_qubits": 30,
+            "circuit_depth": null,
+            "is_real_hardware": false,
+            "metric_name": "average_absolute_error",
+            "score_classical": null,
+            "score_quantum": null,
+            "quantum_advantage_reported": false,
+            "kernel_concentration_observed": false
+          }
+        ]
+      },
+      {
+        "dataset_name": "Dataset (Q, E3) - Quantum QNN labels on Fashion-MNIST with E3",
+        "local_dataset_key": null,
+        "domain_type": "synthetic",
+        "task_type": "regression",
+        "experimentos": [
+          {
+            "experiment_label": "Quantum Kernel on Dataset (Q, E3)",
+            "quantum_model": "Quantum Kernel",
+            "classical_baseline": "Best classical ML",
+            "encoding_type": "E3 (Haar-random single-qubit states + Pauli evolution)",
+            "n_qubits": 30,
+            "circuit_depth": null,
+            "is_real_hardware": false,
+            "metric_name": "average_absolute_error",
+            "score_classical": null,
+            "score_quantum": null,
+            "quantum_advantage_reported": null,
+            "kernel_concentration_observed": false
+          },
+          {
+            "experiment_label": "PQK on Dataset (Q, E3)",
+            "quantum_model": "PQK",
+            "classical_baseline": "Best classical ML",
+            "encoding_type": "E3 (Haar-random single-qubit states + Pauli evolution)",
+            "n_qubits": 30,
+            "circuit_depth": null,
+            "is_real_hardware": false,
+            "metric_name": "average_absolute_error",
+            "score_classical": null,
+            "score_quantum": null,
+            "quantum_advantage_reported": true,
+            "kernel_concentration_observed": false
+          }
+        ]
+      },
+      {
+        "dataset_name": "Engineered datasets (Fashion-MNIST inputs, geometric-difference labels)",
+        "local_dataset_key": null,
+        "domain_type": "synthetic",
+        "task_type": "classification",
+        "experimentos": [
+          {
+            "experiment_label": "PQK on Engineered Dataset up to 30q (Fig. 4)",
+            "quantum_model": "PQK",
+            "classical_baseline": "Best classical ML",
+            "encoding_type": "E3 / PQK (1-RDM projection)",
+            "n_qubits": 30,
+            "circuit_depth": null,
+            "is_real_hardware": false,
+            "metric_name": "accuracy",
+            "score_classical": null,
+            "score_quantum": null,
+            "quantum_advantage_reported": true,
+            "kernel_concentration_observed": false
+          },
+          {
+            "experiment_label": "Original Quantum Kernel on Engineered Dataset up to 28q (Fig. 6)",
+            "quantum_model": "Quantum Kernel",
+            "classical_baseline": "Best classical ML",
+            "encoding_type": "unspecified",
+            "n_qubits": 28,
+            "circuit_depth": null,
+            "is_real_hardware": false,
+            "metric_name": "accuracy",
+            "score_classical": null,
+            "score_quantum": null,
+            "quantum_advantage_reported": false,
+            "kernel_concentration_observed": true
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "archivo_origen": "2101.11020v2.pdf",
+    "paper_title": "Supervised quantum machine learning models are kernel methods",
+    "datasets": []
+  },
+  {
+    "archivo_origen": "2103.16774v2.pdf",
+    "paper_title": "Towards understanding the power of quantum kernels in the NISQ era",
+    "datasets": [
+      {
+        "dataset_name": "Engineered Fashion-MNIST (reconstructed labels following Huang et al.)",
+        "local_dataset_key": null,
+        "domain_type": "synthetic",
+        "task_type": "classification",
+        "experimentos": [
+          {
+            "experiment_label": "Ideal QK 2q n=5 (Fig. 4)",
+            "quantum_model": "Quantum Kernel",
+            "classical_baseline": "SVM-RBF",
+            "encoding_type": "IQP / Hadamard + Pauli-Z/ZZ",
+            "n_qubits": 2,
+            "circuit_depth": null,
+            "is_real_hardware": false,
+            "metric_name": "accuracy",
+            "score_classical": null,
+            "score_quantum": 79.0,
+            "quantum_advantage_reported": true,
+            "kernel_concentration_observed": false
+          },
+          {
+            "experiment_label": "Ideal QK 2q n=50 (Fig. 4)",
+            "quantum_model": "Quantum Kernel",
+            "classical_baseline": "SVM-RBF",
+            "encoding_type": "IQP / Hadamard + Pauli-Z/ZZ",
+            "n_qubits": 2,
+            "circuit_depth": null,
+            "is_real_hardware": false,
+            "metric_name": "accuracy",
+            "score_classical": null,
+            "score_quantum": 94.0,
+            "quantum_advantage_reported": true,
+            "kernel_concentration_observed": false
+          },
+          {
+            "experiment_label": "Ideal QK 2q n=100 (Fig. 4)",
+            "quantum_model": "Quantum Kernel",
+            "classical_baseline": "SVM-RBF",
+            "encoding_type": "IQP / Hadamard + Pauli-Z/ZZ",
+            "n_qubits": 2,
+            "circuit_depth": null,
+            "is_real_hardware": false,
+            "metric_name": "accuracy",
+            "score_classical": null,
+            "score_quantum": 95.0,
+            "quantum_advantage_reported": true,
+            "kernel_concentration_observed": false
+          },
+          {
+            "experiment_label": "Ideal QK 2q n=200 (Fig. 4)",
+            "quantum_model": "Quantum Kernel",
+            "classical_baseline": "SVM-RBF",
+            "encoding_type": "IQP / Hadamard + Pauli-Z/ZZ",
+            "n_qubits": 2,
+            "circuit_depth": null,
+            "is_real_hardware": false,
+            "metric_name": "accuracy",
+            "score_classical": null,
+            "score_quantum": 96.0,
+            "quantum_advantage_reported": true,
+            "kernel_concentration_observed": false
+          },
+          {
+            "experiment_label": "Noisy QK 2q depolarizing p=0.05 (Fig. 4)",
+            "quantum_model": "Quantum Kernel",
+            "classical_baseline": "SVM-RBF",
+            "encoding_type": "IQP / Hadamard + Pauli-Z/ZZ",
+            "n_qubits": 2,
+            "circuit_depth": null,
+            "is_real_hardware": false,
+            "metric_name": "accuracy",
+            "score_classical": null,
+            "score_quantum": null,
+            "quantum_advantage_reported": false,
+            "kernel_concentration_observed": false
+          },
+          {
+            "experiment_label": "Noisy QK 2q depolarizing p=0.001 (Fig. 2 / Fig. 7)",
+            "quantum_model": "Quantum Kernel",
+            "classical_baseline": "SVM-RBF",
+            "encoding_type": "IQP / Hadamard + Pauli-Z/ZZ",
+            "n_qubits": 2,
+            "circuit_depth": null,
+            "is_real_hardware": false,
+            "metric_name": "accuracy",
+            "score_classical": null,
+            "score_quantum": null,
+            "quantum_advantage_reported": false,
+            "kernel_concentration_observed": false
+          },
+          {
+            "experiment_label": "Noisy QK 8q depolarizing p=0.001 (Fig. 2 / Fig. 7)",
+            "quantum_model": "Quantum Kernel",
+            "classical_baseline": "SVM-RBF",
+            "encoding_type": "IQP / Hadamard + Pauli-Z/ZZ",
+            "n_qubits": 8,
+            "circuit_depth": null,
+            "is_real_hardware": false,
+            "metric_name": "accuracy",
+            "score_classical": null,
+            "score_quantum": null,
+            "quantum_advantage_reported": false,
+            "kernel_concentration_observed": false
+          },
+          {
+            "experiment_label": "Noisy QK 8q IBMQ-Melbourne hardware run (Fig. 2 / Fig. 7)",
+            "quantum_model": "Quantum Kernel",
+            "classical_baseline": "SVM-RBF",
+            "encoding_type": "IQP / Hadamard + Pauli-Z/ZZ",
+            "n_qubits": 8,
+            "circuit_depth": null,
+            "is_real_hardware": true,
+            "metric_name": "accuracy",
+            "score_classical": null,
+            "score_quantum": null,
+            "quantum_advantage_reported": false,
+            "kernel_concentration_observed": false
+          },
+          {
+            "experiment_label": "Calibrated Noisy QK 8q IBMQ-Melbourne noise model (Fig. 3 / Fig. 9 / Fig. 10)",
+            "quantum_model": "Quantum Kernel (calibrated: shift / nearest projection)",
+            "classical_baseline": "SVM-RBF",
+            "encoding_type": "IQP / Hadamard + Pauli-Z/ZZ",
+            "n_qubits": 8,
+            "circuit_depth": null,
+            "is_real_hardware": false,
+            "metric_name": "accuracy",
+            "score_classical": null,
+            "score_quantum": null,
+            "quantum_advantage_reported": null,
+            "kernel_concentration_observed": false
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "archivo_origen": "2207.05865v2.pdf",
+    "paper_title": "Universal expressiveness of variational quantum classifiers and quantum kernels for support vector machines",
+    "datasets": []
+  },
+  {
+    "archivo_origen": "2208.11060v2.pdf",
+    "paper_title": "Exponential concentration in quantum kernel methods",
+    "datasets": [
+      {
+        "dataset_name": "Engineered dataset (40-qubit concentration simulation, Fig. 3)",
+        "local_dataset_key": null,
+        "domain_type": "synthetic",
+        "task_type": "regression",
+        "experimentos": [
+          {
+            "experiment_label": "Fidelity QK 40q finite-shot vs exact (Fig. 3)",
+            "quantum_model": "Fidelity Quantum Kernel",
+            "classical_baseline": "unspecified",
+            "encoding_type": "unspecified",
+            "n_qubits": 40,
+            "circuit_depth": null,
+            "is_real_hardware": false,
+            "metric_name": "relative_test_loss",
+            "score_classical": null,
+            "score_quantum": null,
+            "quantum_advantage_reported": false,
+            "kernel_concentration_observed": true
+          }
+        ]
+      },
+      {
+        "dataset_name": "MNIST (dimensionally reduced to n features, Ns=40)",
+        "local_dataset_key": null,
+        "domain_type": "image",
+        "task_type": "classification",
+        "experimentos": [
+          {
+            "experiment_label": "Fidelity QK L-layer HEE expressivity study (Fig. 6)",
+            "quantum_model": "Fidelity Quantum Kernel",
+            "classical_baseline": "unspecified",
+            "encoding_type": "Hardware Efficient Embedding (HEE: Rx + entangling)",
+            "n_qubits": null,
+            "circuit_depth": null,
+            "is_real_hardware": false,
+            "metric_name": "kernel_variance",
+            "score_classical": null,
+            "score_quantum": null,
+            "quantum_advantage_reported": null,
+            "kernel_concentration_observed": true
+          },
+          {
+            "experiment_label": "PQK L-layer HEE expressivity study (Fig. 6)",
+            "quantum_model": "PQK",
+            "classical_baseline": "unspecified",
+            "encoding_type": "Hardware Efficient Embedding (HEE: Rx + entangling)",
+            "n_qubits": null,
+            "circuit_depth": null,
+            "is_real_hardware": false,
+            "metric_name": "kernel_variance",
+            "score_classical": null,
+            "score_quantum": null,
+            "quantum_advantage_reported": null,
+            "kernel_concentration_observed": true
+          },
+          {
+            "experiment_label": "Noisy Fidelity QK & PQK L-layer HEE Pauli noise study (Fig. 8)",
+            "quantum_model": "Fidelity Quantum Kernel / PQK",
+            "classical_baseline": "unspecified",
+            "encoding_type": "Hardware Efficient Embedding (HEE: Rx + entangling)",
+            "n_qubits": null,
+            "circuit_depth": null,
+            "is_real_hardware": false,
+            "metric_name": "kernel_variance",
+            "score_classical": null,
+            "score_quantum": null,
+            "quantum_advantage_reported": null,
+            "kernel_concentration_observed": true
+          }
+        ]
+      },
+      {
+        "dataset_name": "Hypercube dataset (Ns=10)",
+        "local_dataset_key": null,
+        "domain_type": "synthetic",
+        "task_type": "classification",
+        "experimentos": [
+          {
+            "experiment_label": "Fidelity QK Product Embedding global measurement (Fig. 7 & Fig. 13 up to 40q)",
+            "quantum_model": "Fidelity Quantum Kernel",
+            "classical_baseline": "unspecified",
+            "encoding_type": "Product embedding (single-qubit rotations Rx/Ry/H/Rz)",
+            "n_qubits": 40,
+            "circuit_depth": 1,
+            "is_real_hardware": false,
+            "metric_name": "kernel_variance",
+            "score_classical": null,
+            "score_quantum": null,
+            "quantum_advantage_reported": null,
+            "kernel_concentration_observed": true
+          },
+          {
+            "experiment_label": "Parameterized QK Kernel Target Alignment TA(theta) (Fig. 9)",
+            "quantum_model": "Parameterized Quantum Kernel",
+            "classical_baseline": "unspecified",
+            "encoding_type": "Ry rotations + entangling layer",
+            "n_qubits": null,
+            "circuit_depth": 1,
+            "is_real_hardware": false,
+            "metric_name": "variance_TA",
+            "score_classical": null,
+            "score_quantum": null,
+            "quantum_advantage_reported": null,
+            "kernel_concentration_observed": true
+          }
+        ]
+      },
+      {
+        "dataset_name": "Synthetic maximally expressive state dataset (Ns=25 and Ns=200)",
+        "local_dataset_key": null,
+        "domain_type": "synthetic",
+        "task_type": "regression",
+        "experimentos": [
+          {
+            "experiment_label": "PQK Gram matrix distinguishability tomography vs SWAP test (Ns=25, Fig. 14)",
+            "quantum_model": "PQK",
+            "classical_baseline": "unspecified",
+            "encoding_type": "Maximally expressive encoding",
+            "n_qubits": null,
+            "circuit_depth": null,
+            "is_real_hardware": false,
+            "metric_name": "distinguishable_ratio",
+            "score_classical": null,
+            "score_quantum": null,
+            "quantum_advantage_reported": null,
+            "kernel_concentration_observed": true
+          },
+          {
+            "experiment_label": "PQK 12q generalization under finite shots (Ns=200, Fig. 15)",
+            "quantum_model": "PQK",
+            "classical_baseline": "unspecified",
+            "encoding_type": "Maximally expressive encoding",
+            "n_qubits": 12,
+            "circuit_depth": null,
+            "is_real_hardware": false,
+            "metric_name": "relative_test_loss",
+            "score_classical": null,
+            "score_quantum": null,
+            "quantum_advantage_reported": false,
+            "kernel_concentration_observed": true
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "archivo_origen": "2309.14419v2.pdf",
+    "paper_title": "On the expressivity of embedding quantum kernels",
+    "datasets": []
+  }
+]
+

@@ -1,6 +1,7 @@
 from __future__ import annotations
  
 import difflib
+import json
 import logging
 import math
 import os
@@ -114,14 +115,44 @@ class ReportePaper(BaseModel):
 # 2. EXTRACCIÓN CON GEMINI (jerárquica) Y APLANADO A FILAS
 # ==============================================================================
  
-def extraer_reporte_de_json(json_path: str) -> Optional[ReportePaper]:
-    """Lee el JSON escrito a mano (papers/<nombre>.json) y devuelve el reporte jerárquico validado."""
+def cargar_reportes_de_json(json_path: str) -> List[Tuple[str, Optional[ReportePaper]]]:
+    """
+    Lee UN solo JSON con todos los papers (papers/papers.json).
+    Formato: lista de objetos; cada uno = campos de ReportePaper + 'archivo_origen' (p. ej. "2011.01938v2.pdf").
+    También acepta {"papers": [ ... ]}. Devuelve [(archivo_origen, reporte | None)]; None = entrada inválida.
+    """
     path = Path(json_path)
     try:
-        return ReportePaper.model_validate_json(path.read_text(encoding="utf-8"))
-    except (OSError, ValidationError, ValueError) as e:   # archivo ilegible, JSON mal formado o fuera de esquema
-        logger.error("No se pudo leer/validar el JSON '%s': %s", path.name, e)
-        return None
+        datos = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as e:                      # archivo ilegible o JSON mal formado
+        logger.error("No se pudo leer el JSON '%s': %s", path.name, e)
+        return []
+    if isinstance(datos, dict):
+        datos = datos.get("papers", [])
+    if not isinstance(datos, list):
+        logger.error("'%s' debe contener una lista de papers.", path.name)
+        return []
+
+    salida: List[Tuple[str, Optional[ReportePaper]]] = []
+    for i, item in enumerate(datos):
+        nombre = str(item.get("archivo_origen") or f"paper_{i}") if isinstance(item, dict) else f"paper_{i}"
+        try:
+            salida.append((nombre, ReportePaper.model_validate(item)))   # campos extra (archivo_origen) se ignoran
+        except ValidationError as e:
+            logger.error("Entrada %d ('%s') inválida en el JSON: %s", i, nombre, e)
+            salida.append((nombre, None))
+    return salida
+
+
+# --- versión anterior: un JSON por paper (sustituida por cargar_reportes_de_json) ---
+# def extraer_reporte_de_json(json_path: str) -> Optional[ReportePaper]:
+#     """Lee el JSON escrito a mano (papers/<nombre>.json) y devuelve el reporte jerárquico validado."""
+#     path = Path(json_path)
+#     try:
+#         return ReportePaper.model_validate_json(path.read_text(encoding="utf-8"))
+#     except (OSError, ValidationError, ValueError) as e:
+#         logger.error("No se pudo leer/validar el JSON '%s': %s", path.name, e)
+#         return None
 
 
 # ------------------------------------------------------------------------------
@@ -791,15 +822,17 @@ def _ruta_pendientes(output_csv_path: str) -> str:
 # ==============================================================================
  
 def procesar_paper_pdf(
-    pdf_path: str,
+    # pdf_path: str,                                 # (versión un JSON por paper)
+    nombre: str,
+    reporte: Optional[ReportePaper],
     registro_ds: RegistroDatasets,
     # client_api: Optional[genai.Client] = None,   # (API Gemini desactivada)
     kernel_provider: Callable = kernel_provider_simulado,
 ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
     """PDF -> (filas_completas, filas_pendientes). Una fila por experimento de cada dataset del paper."""
-    nombre = Path(pdf_path).name
+    # nombre = Path(pdf_path).name
     # reporte = extraer_reporte_de_pdf(pdf_path, client_api, datasets_disponibles=registro_ds.claves())
-    reporte = extraer_reporte_de_json(pdf_path)      # ahora pdf_path es la ruta del JSON
+    # reporte = extraer_reporte_de_json(pdf_path)      # (versión un JSON por paper)
     if reporte is None:
         # return [], [{"archivo_origen": nombre, "motivo": "fallo en la extracción con Gemini"}]
         return [], [{"archivo_origen": nombre, "motivo": "JSON ilegible o con esquema inválido"}]
@@ -819,7 +852,9 @@ def procesar_paper_pdf(
  
  
 def registrar_paper_pdf_en_csv(
-    pdf_path: str,
+    # pdf_path: str,                                 # (versión un JSON por paper)
+    nombre: str,
+    reporte: Optional[ReportePaper],
     output_csv_path: str,
     registro_ds: Optional[RegistroDatasets] = None,
     # client_api: Optional[genai.Client] = None,   # (API Gemini desactivada)
@@ -827,8 +862,9 @@ def registrar_paper_pdf_en_csv(
 ):
     """MODO 1: paper PDF -> N datasets x M experimentos -> filas COMPLETAS en el CSV."""
     registro_ds = registro_ds or registro_por_defecto()
-    completas, pendientes = procesar_paper_pdf(pdf_path, registro_ds, kernel_provider=kernel_provider)
-    nombre = Path(pdf_path).name
+    # completas, pendientes = procesar_paper_pdf(pdf_path, registro_ds, kernel_provider=kernel_provider)
+    # nombre = Path(pdf_path).name
+    completas, pendientes = procesar_paper_pdf(nombre, reporte, registro_ds, kernel_provider=kernel_provider)
     guardar_filas_en_csv(completas, output_csv_path, reemplazar_archivos=[nombre])
     if pendientes:
         guardar_filas_en_csv(pendientes, _ruta_pendientes(output_csv_path), columnas=None,
@@ -879,13 +915,16 @@ if __name__ == "__main__":
     # registro.registrar_csv("german_credit", "data/german.csv", target_col="class",
     #                        aliases=["German Credit", "Statlog German Credit"])
  
-    # CASO A: todos los JSON de la carpeta 'papers/' (uno por paper, escrito a mano)
+    # CASO A: todos los papers de 'papers/papers.json' (un único JSON escrito a mano)
     # for pdf in sorted(Path("papers").glob("*.pdf")):          # (versión con API Gemini)
     #     print(f"\n--- PROCESANDO PAPER: {pdf.name} ---")
     #     registrar_paper_pdf_en_csv(str(pdf), CSV_META_DATASET, registro_ds=registro)
-    for json_file in sorted(Path("papers").glob("*.json")):
-        print(f"\n--- PROCESANDO PAPER: {json_file.name} ---")
-        registrar_paper_pdf_en_csv(str(json_file), CSV_META_DATASET, registro_ds=registro)
+    # for json_file in sorted(Path("papers").glob("*.json")):   # (versión un JSON por paper)
+    #     print(f"\n--- PROCESANDO PAPER: {json_file.name} ---")
+    #     registrar_paper_pdf_en_csv(str(json_file), CSV_META_DATASET, registro_ds=registro)
+    for nombre, reporte in cargar_reportes_de_json("papers/papers.json"):   # UN solo JSON con todos los papers
+        print(f"\n--- PROCESANDO PAPER: {nombre} ---")
+        registrar_paper_pdf_en_csv(nombre, reporte, CSV_META_DATASET, registro_ds=registro)
  
     # CASO B: experimento local con datos propios
     print("\n--- PROCESANDO EXPERIMENTO LOCAL ---")
@@ -907,3 +946,4 @@ if __name__ == "__main__":
             "score_classical": 0.74, "score_quantum": 0.91, "quantum_advantage_reported": True,
         },
     )
+ 
