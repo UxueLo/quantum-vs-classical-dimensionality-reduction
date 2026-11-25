@@ -12,9 +12,9 @@ from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple, Union
  
 import numpy as np
 import pandas as pd
-from dotenv import load_dotenv
-from google import genai
-from google.genai import types
+# from dotenv import load_dotenv          # (API Gemini desactivada)
+# from google import genai                # (API Gemini desactivada)
+# from google.genai import types          # (API Gemini desactivada)
 from pydantic import BaseModel, Field, ValidationError
 from sklearn.decomposition import PCA
 from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
@@ -26,7 +26,7 @@ from sklearn.preprocessing import LabelEncoder, MinMaxScaler, StandardScaler
  
 logger = logging.getLogger("createCSV")
  
-MODELO_GEMINI = "gemini-3.8-flash"
+# MODELO_GEMINI = "gemini-3.8-flash"   # (API Gemini desactivada)
 LAMBDA_REG = 1e-3
 MAX_QUBITS_SIM = 10          # el simulador estadovector crece como 2^n
 MAX_MUESTRAS = 200           # N máximo por dataset (los cálculos son O(N^3))
@@ -114,66 +114,81 @@ class ReportePaper(BaseModel):
 # 2. EXTRACCIÓN CON GEMINI (jerárquica) Y APLANADO A FILAS
 # ==============================================================================
  
-def _construir_prompt(datasets_disponibles: Optional[List[str]]) -> str:
-    lista = ", ".join(datasets_disponibles) if datasets_disponibles else "(ninguno)"
-    return f"""
-Analiza este artículo de investigación sobre aprendizaje automático cuántico y extrae su
-estructura completa: PAPER -> DATASETS -> EXPERIMENTOS.
- 
-Reglas:
-1. Crea una entrada en 'datasets' por CADA dataset distinto usado (reales o sintéticos).
-2. Dentro de cada dataset, crea un experimento independiente por CADA combinación
-   modelo / encoding / nº de qubits / profundidad / simulador-vs-hardware con resultados propios.
-   Un mismo dataset suele producir varios experimentos con scores distintos.
-3. Los scores (score_classical, score_quantum) deben corresponder a ESE experimento concreto
-   (tablas, figuras o texto). No mezcles resultados de datasets o configuraciones distintas.
-4. NO inventes valores: si un número no aparece en el paper, déjalo en null.
-5. Datasets locales disponibles para calcular métricas: [{lista}].
-   Si un dataset del paper corresponde a uno de ellos, rellena 'local_dataset_key' con la clave exacta.
-"""
- 
- 
-def extraer_reporte_de_pdf(
-    pdf_path: str,
-    client_api: Optional[genai.Client] = None,
-    datasets_disponibles: Optional[List[str]] = None,
-    modelo: str = MODELO_GEMINI,
-    reintentos: int = 3,
-) -> Optional[ReportePaper]:
-    """Llama a Gemini con el PDF y devuelve el reporte jerárquico validado."""
-    path = Path(pdf_path)
-    if client_api is None:
-        load_dotenv()
-        api_key = os.getenv("GEMINI_API_KEY")
-        if not api_key:
-            raise RuntimeError("Falta GEMINI_API_KEY (variable de entorno o archivo .env).")
-        client_api = genai.Client(api_key=api_key)
- 
-    pdf_bytes = path.read_bytes()
-    prompt = _construir_prompt(datasets_disponibles)
- 
-    for intento in range(1, reintentos + 1):
-        try:
-            response = client_api.models.generate_content(
-                model=modelo,
-                contents=[types.Part.from_bytes(data=pdf_bytes, mime_type="application/pdf"), prompt],
-                config=types.GenerateContentConfig(
-                    response_mime_type="application/json",
-                    response_schema=ReportePaper,
-                    temperature=0.1,
-                ),
-            )
-            if not response.text:
-                raise ValueError("Respuesta vacía de Gemini.")
-            return ReportePaper.model_validate_json(response.text)
-        except (ValidationError, ValueError, Exception) as e:  # red, cuota, JSON truncado...
-            logger.warning("Intento %d/%d fallido para '%s': %s", intento, reintentos, path.name, e)
-            if intento < reintentos:
-                time.sleep(2 ** intento)
-    logger.error("No se pudo extraer información de '%s'.", path.name)
-    return None
- 
- 
+def extraer_reporte_de_json(json_path: str) -> Optional[ReportePaper]:
+    """Lee el JSON escrito a mano (papers/<nombre>.json) y devuelve el reporte jerárquico validado."""
+    path = Path(json_path)
+    try:
+        return ReportePaper.model_validate_json(path.read_text(encoding="utf-8"))
+    except (OSError, ValidationError, ValueError) as e:   # archivo ilegible, JSON mal formado o fuera de esquema
+        logger.error("No se pudo leer/validar el JSON '%s': %s", path.name, e)
+        return None
+
+
+# ------------------------------------------------------------------------------
+# CÓDIGO ANTIGUO DE LA API DE GEMINI (desactivado; se conserva por si se vuelve a usar)
+# ------------------------------------------------------------------------------
+# def _construir_prompt(datasets_disponibles: Optional[List[str]]) -> str:
+#     lista = ", ".join(datasets_disponibles) if datasets_disponibles else "(ninguno)"
+#     return f"""
+# Analiza este artículo de investigación sobre aprendizaje automático cuántico y extrae su
+# estructura completa: PAPER -> DATASETS -> EXPERIMENTOS.
+#
+# Reglas:
+# 1. Crea una entrada en 'datasets' por CADA dataset distinto usado (reales o sintéticos).
+# 2. Dentro de cada dataset, crea un experimento independiente por CADA combinación
+#    modelo / encoding / nº de qubits / profundidad / simulador-vs-hardware con resultados propios.
+#    Un mismo dataset suele producir varios experimentos con scores distintos.
+# 3. Los scores (score_classical, score_quantum) deben corresponder a ESE experimento concreto
+#    (tablas, figuras o texto). No mezcles resultados de datasets o configuraciones distintas.
+# 4. NO inventes valores: si un número no aparece en el paper, déjalo en null.
+# 5. Datasets locales disponibles para calcular métricas: [{lista}].
+#    Si un dataset del paper corresponde a uno de ellos, rellena 'local_dataset_key' con la clave exacta.
+# """
+#
+#
+# def extraer_reporte_de_pdf(
+#     pdf_path: str,
+#     client_api: Optional[genai.Client] = None,
+#     datasets_disponibles: Optional[List[str]] = None,
+#     modelo: str = MODELO_GEMINI,
+#     reintentos: int = 3,
+# ) -> Optional[ReportePaper]:
+#     """Llama a Gemini con el PDF y devuelve el reporte jerárquico validado."""
+#     path = Path(pdf_path)
+#     if client_api is None:
+#         load_dotenv()
+#         api_key = os.getenv("GEMINI_API_KEY")
+#         if not api_key:
+#             raise RuntimeError("Falta GEMINI_API_KEY (variable de entorno o archivo .env).")
+#         client_api = genai.Client(api_key=api_key)
+#
+#     pdf_bytes = path.read_bytes()
+#     prompt = _construir_prompt(datasets_disponibles)
+#
+#     for intento in range(1, reintentos + 1):
+#         try:
+#             response = client_api.models.generate_content(
+#                 model=modelo,
+#                 contents=[types.Part.from_bytes(data=pdf_bytes, mime_type="application/pdf"), prompt],
+#                 config=types.GenerateContentConfig(
+#                     response_mime_type="application/json",
+#                     response_schema=ReportePaper,
+#                     temperature=0.1,
+#                 ),
+#             )
+#             if not response.text:
+#                 raise ValueError("Respuesta vacía de Gemini.")
+#             return ReportePaper.model_validate_json(response.text)
+#         except (ValidationError, ValueError, Exception) as e:  # red, cuota, JSON truncado...
+#             logger.warning("Intento %d/%d fallido para '%s': %s", intento, reintentos, path.name, e)
+#             if intento < reintentos:
+#                 time.sleep(2 ** intento)
+#     logger.error("No se pudo extraer información de '%s'.", path.name)
+#     return None
+#
+#
+
+
 def _es_metrica_de_error(metric_name: Optional[str]) -> bool:
     return bool(metric_name) and any(t in metric_name.lower() for t in ("error", "mse", "rmse", "mae", "loss"))
  
@@ -778,14 +793,16 @@ def _ruta_pendientes(output_csv_path: str) -> str:
 def procesar_paper_pdf(
     pdf_path: str,
     registro_ds: RegistroDatasets,
-    client_api: Optional[genai.Client] = None,
+    # client_api: Optional[genai.Client] = None,   # (API Gemini desactivada)
     kernel_provider: Callable = kernel_provider_simulado,
 ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
     """PDF -> (filas_completas, filas_pendientes). Una fila por experimento de cada dataset del paper."""
     nombre = Path(pdf_path).name
-    reporte = extraer_reporte_de_pdf(pdf_path, client_api, datasets_disponibles=registro_ds.claves())
+    # reporte = extraer_reporte_de_pdf(pdf_path, client_api, datasets_disponibles=registro_ds.claves())
+    reporte = extraer_reporte_de_json(pdf_path)      # ahora pdf_path es la ruta del JSON
     if reporte is None:
-        return [], [{"archivo_origen": nombre, "motivo": "fallo en la extracción con Gemini"}]
+        # return [], [{"archivo_origen": nombre, "motivo": "fallo en la extracción con Gemini"}]
+        return [], [{"archivo_origen": nombre, "motivo": "JSON ilegible o con esquema inválido"}]
  
     registros = aplanar_reporte(reporte, nombre)
     logger.info("'%s': %d datasets, %d experimentos extraídos.", nombre, len(reporte.datasets), len(registros))
@@ -805,12 +822,12 @@ def registrar_paper_pdf_en_csv(
     pdf_path: str,
     output_csv_path: str,
     registro_ds: Optional[RegistroDatasets] = None,
-    client_api: Optional[genai.Client] = None,
+    # client_api: Optional[genai.Client] = None,   # (API Gemini desactivada)
     kernel_provider: Callable = kernel_provider_simulado,
 ):
     """MODO 1: paper PDF -> N datasets x M experimentos -> filas COMPLETAS en el CSV."""
     registro_ds = registro_ds or registro_por_defecto()
-    completas, pendientes = procesar_paper_pdf(pdf_path, registro_ds, client_api, kernel_provider)
+    completas, pendientes = procesar_paper_pdf(pdf_path, registro_ds, kernel_provider=kernel_provider)
     nombre = Path(pdf_path).name
     guardar_filas_en_csv(completas, output_csv_path, reemplazar_archivos=[nombre])
     if pendientes:
@@ -862,10 +879,13 @@ if __name__ == "__main__":
     # registro.registrar_csv("german_credit", "data/german.csv", target_col="class",
     #                        aliases=["German Credit", "Statlog German Credit"])
  
-    # CASO A: todos los PDFs de la carpeta 'papers/'
-    for pdf in sorted(Path("papers").glob("*.pdf")):
-        print(f"\n--- PROCESANDO PAPER: {pdf.name} ---")
-        registrar_paper_pdf_en_csv(str(pdf), CSV_META_DATASET, registro_ds=registro)
+    # CASO A: todos los JSON de la carpeta 'papers/' (uno por paper, escrito a mano)
+    # for pdf in sorted(Path("papers").glob("*.pdf")):          # (versión con API Gemini)
+    #     print(f"\n--- PROCESANDO PAPER: {pdf.name} ---")
+    #     registrar_paper_pdf_en_csv(str(pdf), CSV_META_DATASET, registro_ds=registro)
+    for json_file in sorted(Path("papers").glob("*.json")):
+        print(f"\n--- PROCESANDO PAPER: {json_file.name} ---")
+        registrar_paper_pdf_en_csv(str(json_file), CSV_META_DATASET, registro_ds=registro)
  
     # CASO B: experimento local con datos propios
     print("\n--- PROCESANDO EXPERIMENTO LOCAL ---")
@@ -887,4 +907,3 @@ if __name__ == "__main__":
             "score_classical": 0.74, "score_quantum": 0.91, "quantum_advantage_reported": True,
         },
     )
- 
